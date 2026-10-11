@@ -12,9 +12,10 @@
 
 | | |
 |---|---|
-| Status | Draft v5, for review |
+| Status | Draft v6, for review |
 | Date | 2026-10-11 |
 | Scope | Hindi (including Hindi mixed with English) to English. The design leaves room for English to Hindi and other Indian languages later. |
+| Changes in v6 | **A modern web interface** (§9.1): clean, light and dark themes, works offline. **A dedicated translation page** (§9.2) with a stage tracker, time remaining, a live preview of the English as it appears, and a **"While you wait" tech-news panel** (§9.3). The news headlines are fetched by the app's backend, carry no document data, can be switched off by an admin, and are replaced by offline tips when there's no internet. |
 | Changes in v5 | **Users can choose the model** from a short, tested list: Auto (recommended), Fast, Balanced or Best quality (§4.4). **Ollama is removed.** Models are **downloaded from Hugging Face**, pinned to exact versions and checked, and Gemma 4 runs through the bundled **llama.cpp** server (§4.5). An **offline model pack** lets IT install models on many laptops without each one downloading. |
 | Changes in v4 | **Gemma 4 is now the primary translation model**: Gemma 4 E2B on 8 GB laptops and Gemma 4 E4B on 12 GB laptops. The same model also re-reads difficult scanned pages. **IndicTrans2 moves to a supporting role.** It produces a quick draft within minutes, and it is the first fallback whenever Gemma's version fails a check or memory is short. **Two consequences:** the app's memory limit on 8 GB laptops rises from about 3 GB to **about 4.5 GB**, and the final translation takes **longer** on a laptop processor (§11). Qwen3.5 is now only an optional third opinion on 12 GB laptops. |
 | Changes in v3 | Redesigned for laptops with 8–12 GB RAM and no graphics card. One model in memory at a time, a memory guard, and a native Windows install instead of Docker. |
@@ -39,6 +40,7 @@
   - It takes over for any sentence where Gemma's output fails a check.
   - It takes over the whole job if there isn't enough free memory for Gemma 4.
 - **Users can choose the model:** *Auto (recommended)*, *Fast*, *Balanced* or *Best quality*. Only tested models are offered, and options that don't fit the laptop are greyed out (§4.4).
+- **A modern interface:** a clean design in light and dark themes that works offline. While a document translates, the page shows progress, time remaining, a live preview of the English, and the **latest tech news headlines** (§9).
 - **Runs on an 8 GB laptop with no graphics card.** Only one model is in memory at a time, and the app peaks at about 4.5 GB on 8 GB laptops and about 7 GB on 12 GB laptops. On 8 GB laptops, close heavy apps such as Teams or many Chrome tabs while the final translation runs.
 - **Free and local only:** Gemma 4 and every other component are free and openly licensed. There are no paid APIs and no per-page charges. Documents never leave the laptop. The only optional external service is Bhashini (free, Government of India), and it is off by default.
 - **The text-extraction step matters most.** Bihar government PDFs often use legacy fonts such as Kruti Dev, or are scans. The pipeline sorts pages by type and extracts each type differently (§3).
@@ -64,6 +66,7 @@
 | F4 | Show progress page by page. A **quick draft** appears first and the **final version** follows. Keep a history, and show a Windows notification when a job is done. |
 | F5 | Let users review and correct individual sentences. Approved corrections are reused automatically next time (translation memory). |
 | F6 | A glossary **shared by the team** across laptops, for example ज्ञापांक → "Memo No." and कार्यादेश → "Work Order". |
+| F7 | **A modern, easy interface** with light and dark themes. A **translation page** that shows a stage tracker, time remaining, a live preview, and a **tech-news panel** while the user waits. |
 
 ### Non-functional
 
@@ -73,7 +76,7 @@
 | N2 | **Laptop hardware:** runs on a Windows 10/11 laptop with **8 GB RAM**, 4 CPU cores, **no graphics card**, and about 10 GB of free disk space (20 GB on 12 GB laptops). **Peak memory use: no more than 4.5 GB on 8 GB laptops, and no more than 7 GB on 12 GB laptops.** |
 | N3 | **Fallback:** no single failure stops a translation. That includes a crashed model, low memory, a bad scan, a strange font, or the laptop going to sleep. |
 | N4 | **Quality:** at least as good as the current Copilot output in a blind review. **No errors in numbers, dates or reference numbers.** |
-| N5 | **Privacy:** documents stay on the laptop. Files are deleted automatically after N days. The app listens only on `localhost`. |
+| N5 | **Privacy:** documents stay on the laptop. Files are deleted automatically after N days. The app listens only on `localhost`. The only routine outbound traffic is downloading **news headlines** (no document data), which an admin can switch off. |
 | N6 | **Easy to run:** one installer and a desktop shortcut. Models are downloaded from Hugging Face on first run, or imported from an offline model pack. No Ollama, no Docker, no background service, no admin rights for the model engine, and no command line for users. |
 | N7 | **Model choice:** users choose from a short list of tested models, by speed or quality. Every document records which model translated it. |
 
@@ -94,6 +97,7 @@
 6. Which output do people use most: an editable Word file or a PDF that looks like the original?
 7. Will we need **English to Hindi** later, for drafting replies to Beltron? Both Gemma 4 and IndicTrans2 can translate in that direction.
 8. Who can spend about 2 days as a bilingual reviewer to build the evaluation set (§13)?
+9. **Tech news panel:** which news sources should it use? Is IT happy for the app to download news headlines from those sites (no document data is sent)? (§9.3)
 
 ---
 
@@ -460,13 +464,83 @@ User: SUBJECT: <doc subject> | PREVIOUS ENGLISH: <previous paragraph>
 
 ## 9. Web UI
 
+### 9.1 Look and feel
+
+- **A clean, modern single-page app:**
+  - card layout, generous spacing and rounded corners
+  - smooth but subtle transitions
+  - **light and dark themes**, following the Windows setting
+- **Built with free, widely used tools:** Tailwind CSS, shadcn/ui components (accessible, built on Radix) and lucide icons, all MIT or ISC licensed.
+- **Fonts bundled with the app:** **Inter** for English and **Noto Sans Devanagari** for Hindi (SIL Open Font License). No Google Fonts or other CDN, so it looks the same offline.
+- **Designed for laptop screens** from 1366×768 upward. The Review page has keyboard shortcuts: ↑/↓ to move between sentences, Enter to approve, E to edit.
+- **Accessible:** contrast meets WCAG AA, and colour is never the only signal. Confidence is shown by colour, icon and label together: ✓ Good, ! Check, ✕ Needs human.
+- **Light on an 8 GB laptop:**
+  - no video backgrounds or heavy animation libraries
+  - JavaScript under about 1 MB
+  - CSS-only animations that respect Windows' "reduce motion" setting
+- **A short style guide in Phase 1** (colours, type and components) keeps every page consistent. The team or Beltron logo is optional.
+
+### 9.2 The translation page (shown while a document is processing)
+
+The final translation can take 10–20 minutes, so this page is designed to make the wait useful:
+
+```
+┌────────────────────────────────────────────────────────────────────┐
+│  Tender_Notice_2026.pdf                     Balanced · Gemma 4 E2B │
+│  ●──────────●──────────◐──────────○──────────○                     │
+│  Reading    Quick      Final      Checking   Ready                 │
+│  pages      draft ✓    (Gemma 4)                                   │
+│  Page 4 of 10 · about 8 min left                                   │
+├─────────────────────────────────────────────┬──────────────────────┤
+│  Live preview                               │  While you wait      │
+│  ┌──────────────┐   English sentences       │  Tech news           │
+│  │ Hindi page 4 │   appear here as they     │  • Headline – Source │
+│  │  (image)     │   finish, colour-coded    │  • Headline – Source │
+│  └──────────────┘                           │  • Headline – Source │
+│  [ Open quick draft now ]                   │  (opens in browser)  │
+└─────────────────────────────────────────────┴──────────────────────┘
+   You can close this page. A notification appears when it's ready.
+```
+
+- **Stage tracker and time remaining:** the remaining time is estimated from this laptop's own measured speed.
+- **Live preview:** shows the page being processed, with its English sentences appearing as they finish. An **"Open quick draft now"** button appears as soon as the quick draft is ready, so most users start reading within a few minutes.
+- **"While you wait" panel:** tech news headlines (§9.3).
+- **Close the page at any time.** The job continues, and a Windows notification appears when the final version is ready.
+
+### 9.3 The tech news panel
+
+**Our view: it's a nice touch as a side panel, but it shouldn't be the main content of the page.** Two reasons:
+1. The most useful thing to show while waiting is the user's **own document**, since the quick draft arrives within minutes. So the live preview gets the main area.
+2. News needs the internet. Until now the plan promised that nothing leaves the laptop. The design below keeps documents completely local and keeps the app working offline.
+
+**How it works:**
+- **The backend fetches, and the browser only displays.** The app's backend downloads a few **RSS feeds** every 30–60 minutes and caches the headlines. The browser never loads external pages, scripts, ads or trackers.
+- **Headlines only:** title, source, time and a link that opens in the normal browser. **No images** by default. That saves memory and bandwidth on 8 GB laptops and avoids unsuitable pictures.
+- **Curated sources:** an admin manages the list. Start with a few reputable feeds agreed with Vikram, for example government technology releases (PIB, MeitY), one Indian tech news site and one global tech site. An optional keyword blocklist filters headlines.
+- **No document data is ever sent.** The only outbound requests are plain feed downloads. Even so, this is outbound traffic, so:
+  - an **admin switch** in Settings turns the panel on or off, and it is on by default when internet is available
+  - the panel **switches itself off when the laptop is offline** or the feeds can't be reached
+- **When news is off or offline, the panel shows offline content instead:**
+  - a **"Glossary term of the day"** from the team glossary
+  - **tips** such as "Press E to edit a sentence"
+  - the team's translation stats
+- **Security:**
+  - Feed text is cleaned to plain text, with no HTML.
+  - Links open with `rel="noopener noreferrer"`.
+  - The app sets a strict **Content-Security-Policy**, so no external script can run inside it.
+- **Effort and cost:** about 1–2 days of work, with negligible memory use.
+- **A more useful variant to consider:** headlines relevant to the work, such as new **Beltron or Bihar IT department notices** or **GeM updates**, if those sites offer RSS or a stable notices page. To be decided with Vikram.
+
+### 9.4 Pages
+
 | Page | Features |
 |---|---|
 | **Upload** | Drag and drop one or more PDFs, and choose outputs and a glossary. **Model:** *Auto (recommended)*, *Fast*, *Balanced* or *Best quality* (§4.4). It defaults to the laptop setting. Options that don't fit are greyed out, with the reason. Every choice except Fast shows the IndicTrans2 quick draft first. A **"Careful re-read of scanned pages"** checkbox makes Gemma 4 re-read all flagged pages, which is slow. If an admin has enabled Bhashini, a checkbox **"Allow Bhashini fallback for this document"** appears, off by default. |
+| **Translation page** | Stage tracker, time remaining, live preview, "Open quick draft now" and the news panel (§9.2, §9.3). |
 | **Jobs** | Status with **two milestones: "Quick draft ready" and "Final ready"**. A progress bar for each page, counts of segments needing review, download and delete buttons, and a Windows notification when each milestone is reached. On 8 GB laptops, a hint during the Gemma stage: "Close heavy apps for faster results". |
 | **Review** | The original page on the left and the English on the right, colour-coded by confidence. You can **start reviewing the quick draft straight away**, and sentences update as Gemma 4 finishes them. Click a sentence to edit or approve it, or to **re-translate it with another engine**. A **"Re-read this page carefully"** button sends one page to Gemma 4. Includes "Copy all English". |
 | **Glossary and memory** | Add, edit, and import or export the glossary as CSV. **Team sync:** point the app to a shared network folder, or export and import a sync file, so every laptop has the team's latest glossary and translation memory. |
-| **Settings** | The **default model** for this laptop, the active profile (8 GB, 12 GB or workstation), current memory use, engine status (llama-server OK or not), fallback rate, retention period and Bhashini on/off. |
+| **Settings** | Theme (light, dark or follow Windows), **news panel on/off and its sources** (admin), the **default model** for this laptop, the active profile (8 GB, 12 GB or workstation), current memory use, engine status (llama-server OK or not), fallback rate, retention period and Bhashini on/off. |
 | **Settings, Models** | Installed models, with size, licence and checksum status. **Download from Hugging Face** or **import a model pack**. Remove unused models, and re-verify files. Only catalog models are listed. |
 
 The interface is in English with Hindi labels where helpful. It is designed to work for non-technical staff with zero training.
@@ -486,7 +560,8 @@ The interface is in English with Hindi labels where helpful. It is designed to w
 | OCR | PaddleOCR `devanagari_PP-OCRv5_mobile_rec`, run through PaddleOCR or RapidOCR (ONNX Runtime). Tesseract 5 via `pytesseract`, with `tessdata_best` `hin` and `eng`. Gemma 4 vision for re-reads. |
 | Fallback translation and quality check | IndicTrans2 via CTranslate2 int8 plus IndicTransToolkit. If CTranslate2 conversion doesn't work, the fallback is ONNX Runtime int8. Sentences are split with the Indic NLP Library. |
 | Outputs | python-docx and PyMuPDF |
-| Frontend | React, Vite, TypeScript and pdf.js, built to static files and served by FastAPI |
+| Frontend | React, Vite and TypeScript, with **Tailwind CSS**, **shadcn/ui** (Radix) components, **lucide** icons and pdf.js. The **Inter** and **Noto Sans Devanagari** fonts are bundled. It is built to static files (JavaScript under about 1 MB) and served by FastAPI. Live updates use Server-Sent Events. |
+| News panel | The backend fetches RSS feeds with `feedparser`, caches them in SQLite every 30–60 minutes, and cleans them to plain text. An admin switch turns it on or off, and it falls back to offline tips. A strict Content-Security-Policy is applied. |
 | Packaging | **A Windows installer** (PyInstaller and Inno Setup), or a portable zip. Both include `llama-server.exe`. Models are downloaded from Hugging Face on first run, or imported from the offline model pack (USB or network share). |
 | Tests | pytest with PDF test files for every page type (A–D), a **memory test** that fails if peak RAM goes over the profile budget, a **JSON-completeness test** for Gemma output, and the evaluation scripts in `eval/` |
 
@@ -501,6 +576,7 @@ pdf-translator/
 │   │   ├── model_manager.py        # one-model-at-a-time loading + memory guard; starts/stops llama-server
 │   │   ├── model_store.py          # catalog, Hugging Face download, pack import, checksums
 │   │   ├── sync.py                 # glossary/TM team sync (shared folder or file)
+│   │   ├── news.py                 # RSS fetch + cache + sanitise for the "While you wait" panel
 │   │   └── pipeline/
 │   │       ├── classify.py         # page type A/B/C/D
 │   │       ├── extract.py          # native text + legacy-font conversion
@@ -512,7 +588,7 @@ pdf-translator/
 │   │       ├── consistency.py      # same term → same English across the document
 │   │       └── render/             # docx.py, layout_pdf.py, html.py, txt.py
 │   └── tests/
-├── frontend/                       # React + Vite
+├── frontend/                       # React + Vite + Tailwind + shadcn/ui; fonts bundled
 ├── profiles/                       # laptop-8gb.yaml, laptop-12gb.yaml, workstation.yaml
 ├── eval/                           # golden set, metrics, bake-off scripts (run on the test laptop)
 ├── packaging/                      # Windows installer, portable build, build_model_pack.py
@@ -628,7 +704,9 @@ The IT install guide covers silent install for pushing the app to many laptops, 
 
 ## 12. Security, privacy and licensing
 
-- **Documents never leave the laptop.** The app and `llama-server` listen only on `127.0.0.1`. The only external path is the optional Bhashini adapter, which needs both an admin switch and the user's permission for that document. Each Bhashini call is logged.
+- **Documents never leave the laptop.** The app and `llama-server` listen only on `127.0.0.1`. The only external paths are:
+  - the optional Bhashini adapter, which needs both an admin switch and the user's permission for that document, with every call logged
+  - the **news panel**, which downloads public headlines only, sends **no document data**, and can be switched off by an admin
 - **Laptops get lost.** Turn on **BitLocker** (Windows disk encryption). Uploads, page images and outputs are deleted automatically after N days (default 30), and users can delete a job immediately.
 - **Untrusted files:** PDFs are parsed in the worker process with limits on memory, time and page count. We never run PDF JavaScript. Text from a document is passed to Gemma 4 only as **data to translate**. The prompt tells it to translate, never to follow instructions found in the document. The validators reject any output that isn't a translation.
 - **Model files:** pinned Hugging Face commits, SHA-256 checksums and data-only formats on laptops. No remote code ever runs on a laptop (§4.5).
@@ -645,6 +723,9 @@ The IT install guide covers silent install for pushing the app to many laptops, 
 | Tesseract | Apache-2.0 | ✅ Free |
 | llama.cpp (`llama-server`, `llama-cpp-python`), CTranslate2, ONNX Runtime | MIT | ✅ Free |
 | `huggingface_hub` | Apache-2.0 | ✅ Free |
+| React, Vite, Tailwind CSS, shadcn/ui, Radix, lucide icons | MIT / ISC | ✅ Free |
+| Inter and Noto Sans Devanagari fonts | SIL Open Font License | ✅ Free. Bundled. |
+| `feedparser` (news panel) | BSD-2-Clause | ✅ Free |
 | GGUF conversions on Hugging Face (ggml-org, Unsloth) | Same as the original model (Apache-2.0 for Gemma 4) | ✅ Free. Check each repo's licence tag. |
 | PyMuPDF | AGPL-3.0 (or commercial) | Fine for an internal tool, but confirm with whoever handles legal. pypdfium2 (permissive) is the drop-in alternative. |
 | Bhashini (optional) | Free Government of India service | Check its terms of use and access process before enabling |
@@ -709,9 +790,9 @@ The bake-off is **rerun every quarter**. Small models are improving fast, and th
 | Phase | Weeks | Deliverables | Done when |
 |---|---|---|---|
 | **0. Discovery and setup** | 1 | Get **one representative 8 GB laptop**. Collect 50 sample PDFs and sort them by type A–D. Record the Copilot baseline. Seed the glossary with 100–200 terms. **Spikes on the laptop:** **Gemma 4 E2B and E4B RAM, speed and Hindi quality on 30 sentences**; IndicTrans2 int8 conversion and speed; PaddleOCR Devanagari and Tesseract on 5 scans; Gemma 4 vision on 3 bad scans. **Run Gemma 4 GGUF + mmproj with `llama-server.exe` on the laptop.** Choose the exact Hugging Face repos and quantisation, and record commits and checksums. Check that huggingface.co is reachable from the office. | Real speed and memory numbers recorded. Samples and baseline ready. |
-| **1. MVP** | 2–3 | FastAPI app, upload, job queue and stage-by-stage worker, model manager. Type A extraction and Tesseract OCR. Segmentation and placeholders. **IndicTrans2 quick draft plus Gemma 4 final translation through `llama-server`, with JSON output.** A first model catalog and a Hugging Face download script. Basic validators. DOCX and side-by-side output. Minimal React UI. A start script for the test laptop. | **The team translates real Beltron documents with Gemma 4 on an 8 GB laptop** |
+| **1. MVP** | 2–3 | FastAPI app, upload, job queue and stage-by-stage worker, model manager. Type A extraction and Tesseract OCR. Segmentation and placeholders. **IndicTrans2 quick draft plus Gemma 4 final translation through `llama-server`, with JSON output.** A first model catalog and a Hugging Face download script. Basic validators. DOCX and side-by-side output. **The modern UI foundation** (style guide, Tailwind and shadcn/ui, light and dark themes) and **the translation page** with stage tracker, time remaining and live preview. A start script for the test laptop. | **The team translates real Beltron documents with Gemma 4 on an 8 GB laptop** |
 | **2. Quality and fallbacks** | 3–5 | Page classifier and legacy-font conversion. Dual OCR with number cross-check, image clean-up and tables. Gemma 4 page re-read. Memory guard and profiles. **Model choice (Auto, Fast, Balanced, Best quality).** All validators, back-translation, per-sentence selection, the Qwen3.5 third opinion and the circuit breaker. Consistency pass. Prompt tuning. **Bake-off on the laptop.** | Bake-off report written, defaults confirmed and acceptance criteria met |
-| **3. Review and reuse** | 5–6 | Sentence editor with live updates from draft to final, "Re-translate with…", "Re-read this page carefully", translation memory, glossary admin and **team sync** | Corrections reach every laptop |
+| **3. Review and reuse** | 5–6 | Sentence editor with live updates from draft to final, "Re-translate with…", "Re-read this page carefully", translation memory, glossary admin and **team sync**. **The tech news panel** with admin switch and offline tips (1–2 days). | Corrections reach every laptop |
 | **4. Packaging and hardening** | 6–8 | **Windows installer and portable build** (with `llama-server.exe`), **first-run model download**, **Settings, Models page**, and the **offline model pack builder**. Retention and auto-delete. Layout-preserving PDF. Notifications. Settings page. Optional Bhashini adapter, if approved. User guide and IT install guide. **Pilot on 3–5 team laptops.** | **Go-live** |
 | **5. Later (optional)** | n/a | English → Hindi for replies, other Indian languages, a shared workstation profile with Gemma 4 26B or 31B if a bigger machine becomes available | Prioritised by usage |
 
@@ -728,6 +809,7 @@ The bake-off is **rerun every quarter**. Small models are improving fast, and th
 | IT blocks software installation, or antivirus flags `llama-server.exe` | No rollout | A portable build that needs no admin rights. An antivirus exclusion for the app folder. `llama-cpp-python` as the in-process fallback. Involve IT in week 1 (question 4). |
 | **huggingface.co blocked, or slow downloads in the office** | Models can't be installed | The **offline model pack** from a shared drive or USB. Each laptop never needs to download on its own. |
 | **An upstream Hugging Face repo changes or disappears** | Different or missing model | Pinned commits and checksums. A copy of every pinned file is kept in our own model pack on the shared drive. |
+| **News panel: feeds blocked, offline, or an unsuitable headline** | Empty panel, or awkward content at work | Offline tips when feeds can't be reached. Curated sources, an optional keyword blocklist, no images, and an admin switch. |
 | **Users pick a slow or unsuitable model** | Long waits or weaker results | Auto as the default, clear speed and quality labels, greyed-out options that don't fit, and fallbacks that work whatever the choice |
 | Hard scans and handwriting | Missing or wrong text | Dual OCR with number cross-check, the Gemma 4 re-read with checks, and human review |
 | IndicTrans2 doesn't convert to CTranslate2 | Slower quick draft | ONNX Runtime int8, or PyTorch dynamic int8. Tested in Phase 0. |
