@@ -97,7 +97,7 @@
 6. Which output do people use most: an editable Word file or a PDF that looks like the original?
 7. Will we need **English to Hindi** later, for drafting replies to Beltron? Both Gemma 4 and IndicTrans2 can translate in that direction.
 8. Who can spend about 2 days as a bilingual reviewer to build the evaluation set (§13)?
-9. **Tech news panel:** which news sources should it use? Is IT happy for the app to download news headlines from those sites (no document data is sent)? (§9.3)
+9. **Tech news panel:** the sources are decided: **free, general IT news from public RSS feeds** (§9.3.1). Is IT happy for the app to download headlines from those 8 sites? No document data is sent.
 
 ---
 
@@ -516,7 +516,7 @@ The final translation can take 10–20 minutes, so this page is designed to make
 **How it works:**
 - **The backend fetches, and the browser only displays.** The app's backend downloads a few **RSS feeds** every 30–60 minutes and caches the headlines. The browser never loads external pages, scripts, ads or trackers.
 - **Headlines only:** title, source, time and a link that opens in the normal browser. **No images** by default. That saves memory and bandwidth on 8 GB laptops and avoids unsuitable pictures.
-- **Curated sources:** an admin manages the list. Start with a few reputable feeds agreed with Vikram, for example government technology releases (PIB, MeitY), one Indian tech news site and one global tech site. An optional keyword blocklist filters headlines.
+- **Sources:** **free, general IT and tech news**, from the publishers' own public RSS feeds (§9.3.1). An admin can edit the list, and an optional keyword blocklist filters headlines.
 - **No document data is ever sent.** The only outbound requests are plain feed downloads. Even so, this is outbound traffic, so:
   - an **admin switch** in Settings turns the panel on or off, and it is on by default when internet is available
   - the panel **switches itself off when the laptop is offline** or the feeds can't be reached
@@ -529,7 +529,59 @@ The final translation can take 10–20 minutes, so this page is designed to make
   - Links open with `rel="noopener noreferrer"`.
   - The app sets a strict **Content-Security-Policy**, so no external script can run inside it.
 - **Effort and cost:** about 1–2 days of work, with negligible memory use.
-- **A more useful variant to consider:** headlines relevant to the work, such as new **Beltron or Bihar IT department notices** or **GeM updates**, if those sites offer RSS or a stable notices page. To be decided with Vikram.
+
+#### 9.3.1 News sources (free, general IT news)
+
+**Decision:** free, general IT and tech news. The sources are the publishers' own **public RSS feeds**. They are free, need no account or API key, and are meant for exactly this kind of headline-and-link display.
+
+**Starting list.** A mix of Indian and global sources, chosen to be IT-focused and suitable for the office:
+
+| # | Source | Focus | Feed address | On by default |
+|---|---|---|---|---|
+| 1 | The Hindu: Technology | Indian tech news | `https://www.thehindu.com/sci-tech/technology/feeder/default.rss` | ✅ |
+| 2 | ETCIO (Economic Times) | Indian enterprise IT, CIO and government IT | `https://cio.economictimes.indiatimes.com/rss/topstories` | ✅ |
+| 3 | MediaNama | Indian tech policy and digital government | `https://www.medianama.com/feed/` | ✅ |
+| 4 | Gadgets 360 (NDTV) | Indian consumer tech | `https://feeds.feedburner.com/gadgets360-latest` | ✅ |
+| 5 | The Register | Global enterprise IT, software and cloud | `https://www.theregister.com/headlines.atom` | ✅ |
+| 6 | BBC News: Technology | Global tech headlines | `https://feeds.bbci.co.uk/news/technology/rss.xml` | ✅ |
+| 7 | Ars Technica | Global IT and technology | `https://feeds.arstechnica.com/arstechnica/index` | ✅ |
+| 8 | BleepingComputer | Cybersecurity and IT security | `https://www.bleepingcomputer.com/feed/` | ✅ |
+| 9 | TechCrunch | Startups and the tech industry | `https://techcrunch.com/feed/` | Optional |
+| 10 | Inc42 | Indian startups | `https://inc42.com/feed/` | Optional |
+
+> **Check before go-live:** we couldn't open these feeds from our build environment, because its network blocks news sites. The Hindu, The Register and BleepingComputer addresses appear in public feed directories. The rest are the publishers' usual feed addresses. **Phase 3 tests each one from the office network**, replaces any address that has moved, and confirms that IT allows the sites.
+
+**Excluded:**
+- **News APIs** (NewsAPI, GNews and similar). Their free tiers are limited to development or non-commercial use, need API keys, and cap requests.
+- **Aggregators of user-posted links**, such as Hacker News or Reddit. Their content isn't edited, so it's harder to keep suitable for the office.
+- **Scraping websites that have no feed.** It breaks easily and may go against the site's terms.
+
+**How headlines are shown:**
+- **Headline, source name and time only.** Clicking opens the full story on the publisher's site in the normal browser. We don't show full articles, summaries or images. Showing only the headline with a link back is what publishers' RSS terms expect.
+- **Attribution as each publisher asks:** for example, BBC headlines are labelled **"BBC News"** and BBC logos are never shown.
+- **A fair mix:** sources take turns, so one busy source (The Register publishes a lot) doesn't fill the panel. The panel shows the latest 8–10 headlines, removes duplicates of the same story, and hides anything older than 48 hours.
+- **Polite fetching:** every 45 minutes per feed, with a clear app User-Agent. The app re-downloads a feed only when it has changed (ETag and If-Modified-Since), with a 10-second timeout per feed. A failing feed is skipped silently.
+- **Terms:** before go-live we read each publisher's RSS terms of use. Any source that doesn't allow headline display inside an internal app is dropped.
+
+**Configuration** (an admin edits this in Settings, or in `config.yaml`):
+```yaml
+news:
+  enabled: true                  # admin switch; auto-off when offline
+  refresh_minutes: 45
+  max_items: 10
+  max_age_hours: 48
+  show_images: false
+  blocklist: []                  # optional keywords to hide
+  sources:
+    - { name: "The Hindu – Technology", url: "https://www.thehindu.com/sci-tech/technology/feeder/default.rss" }
+    - { name: "ETCIO",                  url: "https://cio.economictimes.indiatimes.com/rss/topstories" }
+    - { name: "MediaNama",              url: "https://www.medianama.com/feed/" }
+    - { name: "Gadgets 360",            url: "https://feeds.feedburner.com/gadgets360-latest" }
+    - { name: "The Register",           url: "https://www.theregister.com/headlines.atom" }
+    - { name: "BBC News",               url: "https://feeds.bbci.co.uk/news/technology/rss.xml" }
+    - { name: "Ars Technica",           url: "https://feeds.arstechnica.com/arstechnica/index" }
+    - { name: "BleepingComputer",       url: "https://www.bleepingcomputer.com/feed/" }
+```
 
 ### 9.4 Pages
 
@@ -792,7 +844,7 @@ The bake-off is **rerun every quarter**. Small models are improving fast, and th
 | **0. Discovery and setup** | 1 | Get **one representative 8 GB laptop**. Collect 50 sample PDFs and sort them by type A–D. Record the Copilot baseline. Seed the glossary with 100–200 terms. **Spikes on the laptop:** **Gemma 4 E2B and E4B RAM, speed and Hindi quality on 30 sentences**; IndicTrans2 int8 conversion and speed; PaddleOCR Devanagari and Tesseract on 5 scans; Gemma 4 vision on 3 bad scans. **Run Gemma 4 GGUF + mmproj with `llama-server.exe` on the laptop.** Choose the exact Hugging Face repos and quantisation, and record commits and checksums. Check that huggingface.co is reachable from the office. | Real speed and memory numbers recorded. Samples and baseline ready. |
 | **1. MVP** | 2–3 | FastAPI app, upload, job queue and stage-by-stage worker, model manager. Type A extraction and Tesseract OCR. Segmentation and placeholders. **IndicTrans2 quick draft plus Gemma 4 final translation through `llama-server`, with JSON output.** A first model catalog and a Hugging Face download script. Basic validators. DOCX and side-by-side output. **The modern UI foundation** (style guide, Tailwind and shadcn/ui, light and dark themes) and **the translation page** with stage tracker, time remaining and live preview. A start script for the test laptop. | **The team translates real Beltron documents with Gemma 4 on an 8 GB laptop** |
 | **2. Quality and fallbacks** | 3–5 | Page classifier and legacy-font conversion. Dual OCR with number cross-check, image clean-up and tables. Gemma 4 page re-read. Memory guard and profiles. **Model choice (Auto, Fast, Balanced, Best quality).** All validators, back-translation, per-sentence selection, the Qwen3.5 third opinion and the circuit breaker. Consistency pass. Prompt tuning. **Bake-off on the laptop.** | Bake-off report written, defaults confirmed and acceptance criteria met |
-| **3. Review and reuse** | 5–6 | Sentence editor with live updates from draft to final, "Re-translate with…", "Re-read this page carefully", translation memory, glossary admin and **team sync**. **The tech news panel** with admin switch and offline tips (1–2 days). | Corrections reach every laptop |
+| **3. Review and reuse** | 5–6 | Sentence editor with live updates from draft to final, "Re-translate with…", "Re-read this page carefully", translation memory, glossary admin and **team sync**. **The tech news panel** with admin switch, offline tips and the source list from §9.3.1. Each feed is tested from the office network and its terms checked (1–2 days). | Corrections reach every laptop |
 | **4. Packaging and hardening** | 6–8 | **Windows installer and portable build** (with `llama-server.exe`), **first-run model download**, **Settings, Models page**, and the **offline model pack builder**. Retention and auto-delete. Layout-preserving PDF. Notifications. Settings page. Optional Bhashini adapter, if approved. User guide and IT install guide. **Pilot on 3–5 team laptops.** | **Go-live** |
 | **5. Later (optional)** | n/a | English → Hindi for replies, other Indian languages, a shared workstation profile with Gemma 4 26B or 31B if a bigger machine becomes available | Prioritised by usage |
 
@@ -886,3 +938,7 @@ The bake-off is **rerun every quarter**. Small models are improving fast, and th
 - Qwen3.5 small models: <https://gigazine.net/gsc_news/en/20260303-qwen-3-5-small>
 - CTranslate2 (int8 CPU inference): <https://github.com/OpenNMT/CTranslate2/>
 - Bhashini (Government of India language platform): <https://bhashini.gov.in>
+- The Hindu RSS feeds (directory listing): <https://feeder.co/discover/site/thehindu.com>
+- The Register feed: <https://feeder.co/discover/3ff67330bc/theregister-com>
+- BleepingComputer feed in a threat-intelligence source list: <https://knowledge.threatconnect.com/docs/cal-automated-threat-library-atl-supported-blogs>
+- BBC News RSS attribution guidance (archived): <https://webarchive.archive.unhcr.org/20170807165546mp_/http://www.bbc.com/news/10628494>
