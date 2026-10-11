@@ -6,15 +6,16 @@
 > - It runs **locally**.
 > - It uses **only free or local models** (no paid APIs).
 > - It runs on an **ordinary office laptop with 8 GB of RAM (12 GB at most)**.
-> - **Gemma 4 is the primary model.**
+> - **Gemma 4 is the primary model.** Users can **choose the model**, and models are **downloaded from Hugging Face, not Ollama**.
 > - It has **fallbacks**.
 > - Its translation quality is the **best achievable within these limits**.
 
 | | |
 |---|---|
-| Status | Draft v4, for review |
+| Status | Draft v5, for review |
 | Date | 2026-10-11 |
 | Scope | Hindi (including Hindi mixed with English) to English. The design leaves room for English to Hindi and other Indian languages later. |
+| Changes in v5 | **Users can choose the model** from a short, tested list: Auto (recommended), Fast, Balanced or Best quality (§4.4). **Ollama is removed.** Models are **downloaded from Hugging Face**, pinned to exact versions and checked, and Gemma 4 runs through the bundled **llama.cpp** server (§4.5). An **offline model pack** lets IT install models on many laptops without each one downloading. |
 | Changes in v4 | **Gemma 4 is now the primary translation model**: Gemma 4 E2B on 8 GB laptops and Gemma 4 E4B on 12 GB laptops. The same model also re-reads difficult scanned pages. **IndicTrans2 moves to a supporting role.** It produces a quick draft within minutes, and it is the first fallback whenever Gemma's version fails a check or memory is short. **Two consequences:** the app's memory limit on 8 GB laptops rises from about 3 GB to **about 4.5 GB**, and the final translation takes **longer** on a laptop processor (§11). Qwen3.5 is now only an optional third opinion on 12 GB laptops. |
 | Changes in v3 | Redesigned for laptops with 8–12 GB RAM and no graphics card. One model in memory at a time, a memory guard, and a native Windows install instead of Docker. |
 | Changes in v2 | Removed every paid cloud API. Bhashini (free, Government of India) remains as an optional fallback that is off by default. |
@@ -28,7 +29,7 @@
   - You drag in a PDF and it translates in the background while you keep working.
   - You review the English side by side with the original.
   - You download a Word file, a PDF that keeps the original layout, or plain text.
-- **Primary model is Gemma 4,** run locally on the laptop's processor through Ollama.
+- **Primary model is Gemma 4,** run locally on the laptop's processor through **llama.cpp**, a small engine bundled with the app. Models are downloaded **from Hugging Face** (§4.5). Ollama is not used.
   - It translates **whole paragraphs** with context.
   - It follows the team glossary and handles mixed Hindi and English text and tables.
   - It writes natural English.
@@ -37,6 +38,7 @@
   - It produces a **quick draft within a few minutes**, so users can read something straight away while Gemma 4 finishes the final version.
   - It takes over for any sentence where Gemma's output fails a check.
   - It takes over the whole job if there isn't enough free memory for Gemma 4.
+- **Users can choose the model:** *Auto (recommended)*, *Fast*, *Balanced* or *Best quality*. Only tested models are offered, and options that don't fit the laptop are greyed out (§4.4).
 - **Runs on an 8 GB laptop with no graphics card.** Only one model is in memory at a time, and the app peaks at about 4.5 GB on 8 GB laptops and about 7 GB on 12 GB laptops. On 8 GB laptops, close heavy apps such as Teams or many Chrome tabs while the final translation runs.
 - **Free and local only:** Gemma 4 and every other component are free and openly licensed. There are no paid APIs and no per-page charges. Documents never leave the laptop. The only optional external service is Bhashini (free, Government of India), and it is off by default.
 - **The text-extraction step matters most.** Bihar government PDFs often use legacy fonts such as Kruti Dev, or are scans. The pipeline sorts pages by type and extracts each type differently (§3).
@@ -72,7 +74,8 @@
 | N3 | **Fallback:** no single failure stops a translation. That includes a crashed model, low memory, a bad scan, a strange font, or the laptop going to sleep. |
 | N4 | **Quality:** at least as good as the current Copilot output in a blind review. **No errors in numbers, dates or reference numbers.** |
 | N5 | **Privacy:** documents stay on the laptop. Files are deleted automatically after N days. The app listens only on `localhost`. |
-| N6 | **Easy to run:** one installer, which also sets up Ollama for Gemma 4, and a desktop shortcut. No Docker, and no command line for users. |
+| N6 | **Easy to run:** one installer and a desktop shortcut. Models are downloaded from Hugging Face on first run, or imported from an offline model pack. No Ollama, no Docker, no background service, no admin rights for the model engine, and no command line for users. |
+| N7 | **Model choice:** users choose from a short list of tested models, by speed or quality. Every document records which model translated it. |
 
 ### Assumptions (to be confirmed)
 
@@ -86,7 +89,7 @@
 1. What are the actual volume and typical page counts?
 2. May we use **Bhashini** (the free Government of India language API) as an optional fallback for non-confidential documents? Or must everything stay strictly offline? The plan works either way. Bhashini is off by default.
 3. **What exact laptop models will run this** (processor, RAM, Windows version, free disk space)? **We need one representative 8 GB laptop to test on in week 1.**
-4. **Can IT install software on these laptops** (the app and Ollama)? Or does it have to be a portable install that needs no admin rights? A portable fallback is described in §11.
+4. **Can IT install software on these laptops?** Is **huggingface.co reachable** from the office network? If it isn't, IT imports the models from an offline **model pack** on a shared drive or USB instead (§4.5).
 5. Is **10–20 minutes** for the final translation of a 10-page document acceptable, given that a quick draft is ready in a few minutes? (§11)
 6. Which output do people use most: an editable Word file or a PDF that looks like the original?
 7. Will we need **English to Hindi** later, for drafting replies to Beltron? Both Gemma 4 and IndicTrans2 can translate in that direction.
@@ -120,7 +123,7 @@ Types A and B cover most digital Beltron documents. **They need no AI model at a
 
 ### 4.1 Memory budget
 
-Windows 11 with Outlook, Office and a browser typically uses 3.5–4.5 GB. Gemma 4 E2B in its 4-bit QAT build needs about 4 GB, so:
+Windows 11 with Outlook, Office and a browser typically uses 3.5–4.5 GB. Gemma 4 E2B as a 4-bit GGUF needs about 4 GB, so:
 
 | Laptop | App peak (during the Gemma 4 stage) | Left for Windows and other apps |
 |---|---|---|
@@ -139,7 +142,7 @@ All engines run on the processor and are free and openly licensed. The RAM colum
 | Legacy font conversion | **legacylipi** (Kruti Dev) plus our own mapping tables | same | negligible | For Kruti Dev and similar fonts. |
 | OCR, standard (both engines run, better result kept) | **PaddleOCR PP-OCRv5 Devanagari mobile** + **Tesseract 5** `hin+eng` | same | ~0.5–1 GB | Small and fast. Two engines let us cross-check numbers. PaddleOCR must use its **Devanagari model**, because its default multilingual model garbles Hindi. |
 | OCR, hard pages (flagged pages only) | **Gemma 4 E2B**, reading the page image | **Gemma 4 E4B**, reading the page image | ~4 / ~6–7 GB | Gemma 4 accepts images directly, so the primary model also re-reads pages that classic OCR couldn't read. PaddleOCR-VL 0.9B is a candidate in the blind test. |
-| **⭐ Primary translation** | **Gemma 4 E2B** (4-bit QAT) | **Gemma 4 E4B** (4-bit QAT) | **~4 / ~6–7 GB** | Translates whole paragraphs with context. Follows the glossary and translation-memory examples. Handles code-mixed text and tables, and writes natural English. |
+| **⭐ Primary translation** | **Gemma 4 E2B** (4-bit GGUF) | **Gemma 4 E4B** (4-bit GGUF) | **~4 / ~6–7 GB** | Translates whole paragraphs with context. Follows the glossary and translation-memory examples. Handles code-mixed text and tables, and writes natural English. |
 | Quick draft and first fallback | **IndicTrans2 1B, Indic→English, int8** (CTranslate2) | same | ~1.5 GB | A specialist translation model with the strongest published Hindi-to-English scores, and fast on CPU. Its draft is ready within minutes. It replaces any Gemma sentence that fails a check, or the whole job if memory is short. |
 | Translation when memory is very short | **IndicTrans2 distilled 200M, int8** | same | ~0.4 GB | The last-resort local model. |
 | Quality check | **IndicTrans2 English→Indic distilled 200M** (back-translation, §7.3) | same | ~0.4 GB | Cheap. Runs on every sentence. |
@@ -165,6 +168,83 @@ All engines run on the processor and are free and openly licensed. The RAM colum
 | ⚠️ **Hard scans and handwriting** | Small models are weaker than large vision models on bad scans. Expect more amber and red sentences for human review on those pages. |
 | ⚠️ **Compared with Copilot** | Copilot uses large cloud models. Our edge is **correct extraction**, **exact numbers**, **consistent terminology**, privacy and no upload limits. The blind test measures overall quality. |
 
+### 4.4 Letting users choose the model
+
+**Recommendation: yes, offer a choice, but from a short tested list, with Auto as the default.** Users don't need to know model names. They choose by what matters to them, speed or quality, and the app works out which model that means on their laptop.
+
+| Choice shown to users | Model used | 10 pages, digital* | Needs |
+|---|---|---|---|
+| **Auto (recommended, default)** | The best model that fits this laptop and its free memory right now: Gemma 4 E4B on 12 GB laptops, Gemma 4 E2B on 8 GB laptops | Depends on the model | n/a |
+| **Fast** | IndicTrans2 only. More literal English, but very quick. | ~2–4 min | 8 GB |
+| **Balanced** | Gemma 4 E2B | ~10–15 min | 8 GB |
+| **Best quality** | Gemma 4 E4B | ~15–25 min | 12 GB |
+| *Alternative* (optional) | Qwen3.5-4B, a different model family | About the same as Balanced | 12 GB |
+
+\*Planning estimates, measured in Phase 0.
+
+**Where users choose:**
+- **Settings:** the default for this laptop.
+- **Upload:** override the default for one document. For example, *Fast* for a routine circular, *Best quality* for a tender.
+- **Review:** re-translate one sentence with a different model.
+
+**Rules that keep it safe and simple:**
+- **Only models in the tested catalog are offered** (§4.5). Users can't enter any Hugging Face model, for four reasons:
+  - Hindi quality is untested.
+  - Some models have non-commercial licences.
+  - Many won't fit in 8 GB.
+  - Some repositories require running their own code.
+- **New models are added by an admin.** A model goes into the catalog only after passing the bake-off (§13).
+- **Options that don't fit are greyed out, with the reason.** For example: "Best quality needs a 12 GB laptop".
+- **The fallback chain applies whatever the choice.** The chosen model goes first. The IndicTrans2 draft and the other fallbacks stay behind it, so a weaker or failed choice never leaves sentences untranslated.
+- **Memory is still protected.** If there isn't enough free memory for the chosen model when the job starts, the app asks the user: "Close other apps, or continue with Balanced?" Auto steps down automatically and says so.
+- **Each document records the model that translated it,** in the job history and in the Word file's properties, so results can be traced later.
+
+### 4.5 Where models come from: Hugging Face, no Ollama
+
+**Yes, every model can come straight from Hugging Face, and Ollama isn't needed.** Ollama is essentially a wrapper around **llama.cpp** with its own model library. We use llama.cpp directly, with **GGUF** model files (the compact 4-bit format llama.cpp reads) downloaded from Hugging Face.
+
+| Model | Hugging Face source (pinned in the catalog) | Format | Runs with |
+|---|---|---|---|
+| Gemma 4 E2B / E4B | `ggml-org/gemma-4-E2B-it-GGUF` (published by the llama.cpp project). For E4B, a matching GGUF repo such as `unsloth/gemma-4-e4b-it-GGUF`. We switch to Google's official repos if they publish 4-bit (QAT) GGUF files. | A 4-bit GGUF file (e.g. Q4_K_M) plus its **`mmproj` vision file**, which is needed for re-reading page images | `llama-server.exe` (llama.cpp CPU build, bundled with the app) |
+| IndicTrans2 1B and 200M | `ai4bharat/indictrans2-indic-en-1B`, `ai4bharat/indictrans2-indic-en-dist-200M`, `ai4bharat/indictrans2-en-indic-dist-200M` | Published as PyTorch weights. **Converted once to CTranslate2 int8** on a build machine. | CTranslate2 |
+| Qwen3.5-4B (optional) | The official Qwen GGUF repo (confirmed in Phase 0) | 4-bit GGUF | `llama-server.exe` |
+| PaddleOCR Devanagari | PaddleOCR's model hub (pinned version) | Paddle or ONNX | RapidOCR / PaddleOCR |
+| Tesseract `hin`, `eng` | GitHub `tesseract-ocr/tessdata_best` (not on Hugging Face) | traineddata | Tesseract |
+
+**Why GGUF and llama.cpp rather than loading the standard PyTorch weights:** the full-precision PyTorch weights of Gemma 4 E2B need roughly 2–3× more memory than the 4-bit GGUF and don't fit next to Windows on an 8 GB laptop. The 4-bit GGUF does.
+
+**How downloading works:**
+1. **A model catalog** (`models/catalog.yaml`) records, for each model:
+   - the Hugging Face repo and **exact commit**
+   - file names, size and **SHA-256 checksum**
+   - RAM needed, licence and role (translate, re-read or quality check)
+   - its bake-off score
+2. **First-run setup:**
+   - The app reads the laptop's RAM and proposes the model set for it.
+   - It downloads them from Hugging Face with `huggingface_hub`, which resumes interrupted downloads and shows a progress bar.
+   - It verifies every checksum.
+   - Alternatively, **Import model pack** loads the models from a folder or USB drive.
+3. **After setup the app runs fully offline** (`HF_HUB_OFFLINE=1`). It never contacts the internet while translating.
+4. **Settings, Models page:** see installed models and their disk use, download optional ones (such as Gemma 4 E4B), remove unused ones, and re-verify checksums.
+
+**Office rollout with an offline model pack:**
+- IT runs `packaging/build_model_pack.py` once. It downloads the pinned files from Hugging Face, fetches the Tesseract data, converts IndicTrans2 to CTranslate2, and writes a checksum manifest.
+- IT puts the pack on a shared drive.
+- Each laptop imports the pack. No laptop downloads 5–10 GB on its own, and this works even if the firewall blocks huggingface.co.
+
+**Safety:**
+- **Only data-only file formats reach the laptops:** GGUF, CTranslate2, ONNX and traineddata. None of them contain executable code.
+- IndicTrans2's Hugging Face repo needs `trust_remote_code` to load in PyTorch. That happens **once, on the build machine**, during conversion, and **never on the laptops**.
+- **Pinned commits and checksums** mean a change in an upstream repo can't silently change our model.
+- **Hugging Face account:** Gemma 4 (Apache-2.0) and IndicTrans2 (MIT) are reported to be freely downloadable. If any repo asks users to accept terms, the pack builder uses a free Hugging Face account token once. **Laptops never need an account.**
+
+**How Gemma 4 runs (`llama-server.exe`):**
+- The app starts it as a child process **only for the Gemma stage**, roughly like this: `llama-server -m gemma-4-E2B-it-Q4_K_M.gguf --mmproj mmproj-gemma-4-E2B.gguf -c 6144 -t <cores-1> --host 127.0.0.1 --port <random>`.
+- It stops the process afterwards, which returns all of that memory.
+- JSON output is enforced by llama.cpp's **JSON-schema constrained output**.
+- It needs no admin rights and no background service, and it listens only on `127.0.0.1`.
+- **Fallback:** if antivirus blocks the `.exe`, `llama-cpp-python` runs the same engine inside the app's Python process.
+
 ---
 
 ## 5. Architecture
@@ -178,17 +258,18 @@ flowchart LR
   W <--> DB
   W <--> FS
   W --> MM["Model manager: one model in RAM, memory guard"]
-  MM --> G4["PRIMARY: Gemma 4 E2B / E4B via Ollama (CPU)"]
+  MM --> G4["PRIMARY: Gemma 4 E2B / E4B (GGUF) via llama-server (CPU)"]
   MM --> IT2["IndicTrans2 1B / 200M (CTranslate2, CPU)"]
   MM --> OCR["PaddleOCR + Tesseract (CPU)"]
   MM -.-> Q35["Qwen3.5-4B (12 GB only, optional)"]
+  A --> MS["Model store: catalog, Hugging Face download / pack import, checksums"]
+  MS --> FS
   W -. "only if admin enables" .-> BH["Bhashini (free govt API)"]
 ```
 
 - **Native Windows install, no Docker.** Docker Desktop sets aside 2 GB or more of RAM, which an 8 GB laptop can't spare.
-- **Ollama runs Gemma 4.** Our installer sets it up.
-  - Gemma 4 is loaded only for its stage, then unloaded (`keep_alive: 0`).
-  - If IT doesn't allow Ollama's background service, a portable `llama.cpp` server shipped inside the app does the same job.
+- **llama.cpp runs Gemma 4.** The bundled `llama-server.exe` is started only for the Gemma stage and stopped afterwards. There is no Ollama and no background service (§4.5).
+- **Model store:** reads the catalog, downloads from Hugging Face or imports the offline pack, verifies checksums, and offers only models that fit this laptop (§4.4).
 - **Model manager and memory guard:**
   - Before loading any model, the manager checks free memory with `psutil`.
   - If there isn't enough for the model plus a 0.5 GB safety margin, it uses the next model in the chain: Gemma 4 E4B, then E2B, then IndicTrans2 1B, then IndicTrans2 200M.
@@ -208,7 +289,7 @@ flowchart LR
 | 1 | Intake | none | Check the file, then render pages to 300 DPI images on disk, one page at a time | Progress bar |
 | 2 | Extract | none, or PaddleOCR + Tesseract | Classify each page. Use native text, convert legacy fonts, or run dual OCR. Check numbers between the two OCR engines. | Pages ticked off |
 | 3 | **Quick draft** | IndicTrans2 1B | Translate every sentence. Fast. | **"Quick draft ready"**: readable within minutes |
-| 4 | **Gemma 4: final translation** | **Gemma 4 E2B / E4B** | (a) Re-read the flagged scanned pages from their images. (b) Translate every paragraph, using context, the glossary and translation-memory examples. | Sentences switch from draft to final as they finish |
+| 4 | **Final translation** | **The chosen model** (Gemma 4 E2B / E4B under Auto) | (a) Re-read the flagged scanned pages from their images. (b) Translate every paragraph, using context, the glossary and translation-memory examples. | Sentences switch from draft to final as they finish |
 | 5 | Check | IndicTrans2 English→Indic 200M (+ IndicTrans2 1B for re-read pages) | Back-translate and validate every sentence. Choose the final version of each sentence: Gemma's if it passes, otherwise IndicTrans2's. Re-draft sentences on pages Gemma re-read. | Confidence colours 🟢🟡🔴 |
 | 6 | Fallback | Qwen3.5-4B (12 GB only), or Bhashini if allowed | Only for sentences where both Gemma 4 and IndicTrans2 failed | Fewer red sentences |
 | 7 | Render | none | DOCX, side-by-side view, layout PDF and TXT | **"Final ready"** and a notification |
@@ -255,8 +336,9 @@ flowchart TD
 
 ### 6.3 How Gemma 4 translates (stage 4b)
 
+- **Model:** whichever the user chose (§4.4). Gemma 4 is the default through Auto.
 - **Unit:** one paragraph or table at a time, about 3–10 sentences. The input numbers each sentence, `[1] … [2] …`.
-- **Output:** JSON with one English translation per numbered sentence, `{"1": "...", "2": "..."}`. Ollama's **structured output** feature enforces this JSON schema. Because each sentence comes back separately, each one can be **checked and replaced on its own**.
+- **Output:** JSON with one English translation per numbered sentence, `{"1": "...", "2": "..."}`. llama.cpp's **JSON-schema constrained output** enforces this structure. Because each sentence comes back separately, each one can be **checked and replaced on its own**.
 - **The prompt contains:**
   - the document subject line
   - the previous paragraph's English, for continuity
@@ -276,9 +358,10 @@ flowchart TD
 |---|---|---|---|---|---|
 | Text extraction | Native (PyMuPDF) | Legacy-font conversion | Dual OCR | n/a | Low dictionary hit rate, or a known legacy font |
 | OCR | Dual classic OCR (PaddleOCR + Tesseract) | **Gemma 4 vision re-read** | n/a | Keep the best-scoring reading and flag the page | Low dictionary hit rate, or numbers disagree |
-| **Translation** | **Gemma 4** (E4B on 12 GB, E2B on 8 GB) | IndicTrans2 1B draft (already computed) | Qwen3.5-4B (12 GB, optional) | Bhashini (if enabled **and** allowed), then keep the Hindi and **flag it red** | A validator fails, timeout, or engine error |
+| **Translation** | **The user's chosen model.** Under Auto: Gemma 4 E4B on 12 GB, E2B on 8 GB. | IndicTrans2 1B draft (already computed) | Qwen3.5-4B (12 GB, optional) | Bhashini (if enabled **and** allowed), then keep the Hindi and **flag it red** | A validator fails, timeout, or engine error |
 | **Memory** | Gemma 4 E4B (12 GB) / E2B (8 GB) | Gemma 4 E2B (12 GB laptops only) | IndicTrans2 1B | IndicTrans2 200M, then pause and ask the user to close other apps | Free RAM is below what the model needs plus 0.5 GB |
-| Runtime | Ollama | Bundled `llama.cpp` server | IndicTrans2 only (no LLM) | n/a | Ollama is missing or not responding |
+| Runtime | `llama-server.exe` (bundled llama.cpp) | `llama-cpp-python` (the same engine inside Python) | IndicTrans2 only (no LLM) | n/a | The server won't start (for example, blocked by antivirus) or stops responding |
+| Model files | Installed model, checksum verified | Re-import from the model pack or re-download from Hugging Face | Next model in the chain | n/a | A file is missing or its checksum doesn't match |
 | Output | Layout PDF | DOCX | HTML side-by-side | TXT | A render error or text overflow. TXT is always produced. |
 | Power and sleep | n/a | n/a | n/a | Resume from the last saved sentence | The laptop sleeps, restarts or crashes |
 
@@ -330,7 +413,7 @@ Reviewers only need to read the amber and red sentences.
 ### 7.4 Engine health and the memory guard
 
 - Every Gemma 4 call has a timeout scaled to paragraph length, and is retried once.
-- **Circuit breaker:** after 3 Gemma failures in a row (Ollama crashed or timed out), the rest of the job uses IndicTrans2, and the job is marked "finished with fallback".
+- **Circuit breaker:** after 3 Gemma failures in a row (llama-server crashed or timed out), the rest of the job uses IndicTrans2, and the job is marked "finished with fallback".
 - **Memory guard:** free RAM is checked before every model load (see the Memory row in §7.1).
 - CPU threads are capped at the number of cores minus one, so the laptop stays responsive.
 
@@ -339,7 +422,7 @@ Reviewers only need to read the amber and red sentences.
 - Progress is saved after every page and every sentence. Jobs survive sleep, shutdown and crashes.
 - The quick draft always exists before Gemma 4 starts. If anything goes wrong later, users still have a complete translation.
 - A job is "done" even when some sentences are red. The UI shows "3 segments need review", never a bare "failed".
-- The job log records which engine produced each sentence. The Settings page shows the **fallback rate**. A spike means something is wrong, such as Ollama not running or too little memory.
+- The job log records which engine produced each sentence. The Settings page shows the **fallback rate**. A spike means something is wrong, such as llama-server being blocked or too little memory.
 
 ---
 
@@ -379,11 +462,12 @@ User: SUBJECT: <doc subject> | PREVIOUS ENGLISH: <previous paragraph>
 
 | Page | Features |
 |---|---|
-| **Upload** | Drag and drop one or more PDFs, and choose outputs and a glossary. **Mode:** *Quick draft only* (IndicTrans2 only, about 2–4 min for 10 pages), *Standard* (quick draft first, then the Gemma 4 final; the default), or *Accurate* (Gemma 4 also re-reads all flagged scanned pages, which is slow). If an admin has enabled Bhashini, a checkbox **"Allow Bhashini fallback for this document"** appears, off by default. |
+| **Upload** | Drag and drop one or more PDFs, and choose outputs and a glossary. **Model:** *Auto (recommended)*, *Fast*, *Balanced* or *Best quality* (§4.4). It defaults to the laptop setting. Options that don't fit are greyed out, with the reason. Every choice except Fast shows the IndicTrans2 quick draft first. A **"Careful re-read of scanned pages"** checkbox makes Gemma 4 re-read all flagged pages, which is slow. If an admin has enabled Bhashini, a checkbox **"Allow Bhashini fallback for this document"** appears, off by default. |
 | **Jobs** | Status with **two milestones: "Quick draft ready" and "Final ready"**. A progress bar for each page, counts of segments needing review, download and delete buttons, and a Windows notification when each milestone is reached. On 8 GB laptops, a hint during the Gemma stage: "Close heavy apps for faster results". |
 | **Review** | The original page on the left and the English on the right, colour-coded by confidence. You can **start reviewing the quick draft straight away**, and sentences update as Gemma 4 finishes them. Click a sentence to edit or approve it, or to **re-translate it with another engine**. A **"Re-read this page carefully"** button sends one page to Gemma 4. Includes "Copy all English". |
 | **Glossary and memory** | Add, edit, and import or export the glossary as CSV. **Team sync:** point the app to a shared network folder, or export and import a sync file, so every laptop has the team's latest glossary and translation memory. |
-| **Settings** | The active profile (8 GB, 12 GB or workstation), the Gemma 4 model in use, current memory use, engine status (Ollama found or not), fallback rate, retention period and Bhashini on/off. |
+| **Settings** | The **default model** for this laptop, the active profile (8 GB, 12 GB or workstation), current memory use, engine status (llama-server OK or not), fallback rate, retention period and Bhashini on/off. |
+| **Settings, Models** | Installed models, with size, licence and checksum status. **Download from Hugging Face** or **import a model pack**. Remove unused models, and re-verify files. Only catalog models are listed. |
 
 The interface is in English with Hindi labels where helpful. It is designed to work for non-technical staff with zero training.
 
@@ -396,13 +480,14 @@ The interface is in English with Hindi labels where helpful. It is designed to w
 | Backend | Python 3.12, FastAPI, Pydantic, SQLAlchemy and SQLite (WAL mode) |
 | Worker | A separate Python process from the same codebase. It runs one stage at a time from a durable queue in the database, with a capped number of CPU threads. |
 | Model manager | Loads and unloads models and checks free memory with `psutil` |
-| **Primary model** | **Gemma 4 E2B or E4B (QAT, 4-bit) via Ollama** on CPU. It uses structured JSON output (`format` set to a JSON schema), `num_ctx` of 4–8K, low temperature and `keep_alive: 0`. The fallback runtime is a portable `llama.cpp` server. |
+| **Primary model** | **Gemma 4 E2B or E4B, as 4-bit GGUF files from Hugging Face**, run by the bundled **`llama-server.exe`** (llama.cpp, CPU build) as a child process for the Gemma stage only. Options: JSON-schema constrained output, context 4–8K, low temperature, and `--mmproj` for page images. The fallback runtime is `llama-cpp-python`. |
+| Model downloads | `huggingface_hub` (resumable, pinned `revision`) driven by `models/catalog.yaml`, with SHA-256 verification, then `HF_HUB_OFFLINE=1` at runtime. An offline model pack is built by `packaging/build_model_pack.py`. |
 | PDF | PyMuPDF (pypdfium2 as fallback), OpenCV for image clean-up |
 | OCR | PaddleOCR `devanagari_PP-OCRv5_mobile_rec`, run through PaddleOCR or RapidOCR (ONNX Runtime). Tesseract 5 via `pytesseract`, with `tessdata_best` `hin` and `eng`. Gemma 4 vision for re-reads. |
 | Fallback translation and quality check | IndicTrans2 via CTranslate2 int8 plus IndicTransToolkit. If CTranslate2 conversion doesn't work, the fallback is ONNX Runtime int8. Sentences are split with the Indic NLP Library. |
 | Outputs | python-docx and PyMuPDF |
 | Frontend | React, Vite, TypeScript and pdf.js, built to static files and served by FastAPI |
-| Packaging | **A Windows installer** (PyInstaller and Inno Setup) that also installs Ollama and pulls Gemma 4, or a portable zip with the bundled `llama.cpp` server. An offline bundle can be copied from USB or a network share. |
+| Packaging | **A Windows installer** (PyInstaller and Inno Setup), or a portable zip. Both include `llama-server.exe`. Models are downloaded from Hugging Face on first run, or imported from the offline model pack (USB or network share). |
 | Tests | pytest with PDF test files for every page type (A–D), a **memory test** that fails if peak RAM goes over the profile budget, a **JSON-completeness test** for Gemma output, and the evaluation scripts in `eval/` |
 
 ```
@@ -413,7 +498,8 @@ pdf-translator/
 │   │   ├── config.py               # profiles + settings
 │   │   ├── db.py, models.py        # SQLite schema: jobs, pages, segments, glossary, tm, log
 │   │   ├── worker.py               # stage-by-stage, resumable job runner
-│   │   ├── model_manager.py        # one-model-at-a-time loading + memory guard
+│   │   ├── model_manager.py        # one-model-at-a-time loading + memory guard; starts/stops llama-server
+│   │   ├── model_store.py          # catalog, Hugging Face download, pack import, checksums
 │   │   ├── sync.py                 # glossary/TM team sync (shared folder or file)
 │   │   └── pipeline/
 │   │       ├── classify.py         # page type A/B/C/D
@@ -429,8 +515,10 @@ pdf-translator/
 ├── frontend/                       # React + Vite
 ├── profiles/                       # laptop-8gb.yaml, laptop-12gb.yaml, workstation.yaml
 ├── eval/                           # golden set, metrics, bake-off scripts (run on the test laptop)
-├── packaging/                      # Windows installer, portable build, offline bundle script
-├── models/                         # downloaded weights (git-ignored)
+├── packaging/                      # Windows installer, portable build, build_model_pack.py
+├── models/
+│   ├── catalog.yaml                # tested models: HF repo, commit, files, sha256, RAM, licence, roles
+│   └── store/                      # downloaded model files (git-ignored)
 └── docs/                           # user guide, IT install guide
 ```
 
@@ -450,28 +538,46 @@ class Translator(Protocol):
 # profiles/laptop-8gb.yaml
 ram_budget_gb: 4.5
 cpu_threads: auto                    # cores - 1
-primary_model: gemma4:e2b-it-qat     # PRIMARY: translation + page re-read
-translation_chain: [gemma4, indictrans2_1b, bhashini, keep_hindi]
-memory_chain: [gemma4:e2b-it-qat, indictrans2-1B-int8, indictrans2-dist-200M-int8]
-quick_draft_model: indictrans2-indic-en-1B-int8
-qe_model: indictrans2-en-indic-dist-200M-int8
+default_choice: auto                 # auto | fast | balanced | best   (user can override)
+auto_model: gemma4-e2b               # PRIMARY under Auto: translation + page re-read
+offered: [fast, balanced]            # "best" (E4B) greyed out on 8 GB laptops
+translation_chain: [chosen, indictrans2_1b, bhashini, keep_hindi]
+memory_chain: [gemma4-e2b, indictrans2-1b, indictrans2-200m]
+quick_draft_model: indictrans2-1b
+qe_model: indictrans2-en-indic-200m
 ocr: [dual_classic, gemma4_reread]
 reread_auto_pages: 3
-gemma: { num_ctx: 6144, temperature: 0.2, keep_alive: 0, paragraph_max_sentences: 10 }
+llama_server: { ctx: 6144, temperature: 0.2, threads: auto, paragraph_max_sentences: 10 }
 bhashini: { enabled: false }
 limits: { max_mb: 50, max_pages: 100, retention_days: 30 }
 
 # profiles/laptop-12gb.yaml  (differences only)
 ram_budget_gb: 7
-primary_model: gemma4:e4b-it-qat
-translation_chain: [gemma4, indictrans2_1b, qwen3.5_4b, bhashini, keep_hindi]
-memory_chain: [gemma4:e4b-it-qat, gemma4:e2b-it-qat, indictrans2-1B-int8, indictrans2-dist-200M-int8]
+auto_model: gemma4-e4b
+offered: [fast, balanced, best, qwen3.5-4b]
+translation_chain: [chosen, indictrans2_1b, qwen3.5-4b, bhashini, keep_hindi]
+memory_chain: [gemma4-e4b, gemma4-e2b, indictrans2-1b, indictrans2-200m]
 
 # profiles/workstation.yaml  (optional: 16 GB+ RAM or an NVIDIA GPU)
 ram_budget_gb: 24
-primary_model: gemma4:31b            # or gemma4:26b (MoE)
+auto_model: gemma4-31b              # or gemma4-26b (MoE)
 ```
-The exact Ollama tags are confirmed in Phase 0.
+```yaml
+# models/catalog.yaml (one entry shown; repo commits, file names and checksums are filled in during Phase 0)
+- id: gemma4-e2b
+  label: "Balanced: Gemma 4 E2B"
+  source: { hf_repo: ggml-org/gemma-4-E2B-it-GGUF, revision: <commit-sha> }
+  files:
+    - { name: gemma-4-E2B-it-Q4_K_M.gguf, sha256: <...> }
+    - { name: mmproj-gemma-4-E2B-it-f16.gguf, sha256: <...> }   # vision, for page re-read
+  runtime: llama-server
+  ram_gb: 4.0
+  min_profile: laptop-8gb
+  licence: Apache-2.0
+  roles: [translate, reread]
+  bakeoff: { chrf: null, blind_win_rate: null }                  # filled in by Phase 2
+```
+The profiles refer to models by their catalog `id`. The exact repos, files and quantisation are confirmed in Phase 0.
 
 ---
 
@@ -492,18 +598,18 @@ Each page Gemma 4 re-reads adds about 1–3 minutes.
 | What | Size |
 |---|---|
 | App, runtimes, IndicTrans2 1B and 200M (both directions), PaddleOCR and Tesseract | ~3 GB |
-| Gemma 4 E2B (QAT) | ~4.3 GB |
-| Gemma 4 E4B (QAT), 12 GB profile | ~6.1 GB |
+| Gemma 4 E2B (4-bit GGUF + vision file) | ~4 GB |
+| Gemma 4 E4B (4-bit GGUF + vision file), 12 GB profile | ~6 GB |
 | Qwen3.5-4B, optional | ~3 GB |
 | **Total** | **About 7.5 GB (8 GB profile), and about 13–16 GB (12 GB profile)** |
 
 **Installation:**
 
-1. Run the installer, or unzip the portable build. It needs no internet if you use the offline bundle.
-2. The installer sets up Ollama and the Gemma 4 model for this laptop's profile.
-3. Double-click the desktop shortcut. The browser opens at `http://localhost:8080`.
+1. Run the installer, or unzip the portable build.
+2. On first run, the setup page recommends models for this laptop. Click **Download from Hugging Face**, or **Import model pack** from the shared drive or USB. Checksums are verified.
+3. Done. The browser opens at `http://localhost:8080`. From then on the app runs offline.
 
-The IT install guide covers silent install for pushing the app to many laptops, antivirus exclusions for the models folder, running without the Ollama service (portable `llama.cpp` mode), and how to update models later.
+The IT install guide covers silent install for pushing the app to many laptops, antivirus exclusions for the models folder, building and publishing the **offline model pack**, allowing `llama-server.exe` through antivirus, and how to roll out new model versions (a new pack plus an updated catalog).
 
 **Tips for users (also shown in the app):**
 - On 8 GB laptops, close Teams and extra Chrome tabs while "Final" is running.
@@ -522,9 +628,10 @@ The IT install guide covers silent install for pushing the app to many laptops, 
 
 ## 12. Security, privacy and licensing
 
-- **Documents never leave the laptop.** The app and Ollama listen only on `127.0.0.1`. The only external path is the optional Bhashini adapter, which needs both an admin switch and the user's permission for that document. Each Bhashini call is logged.
+- **Documents never leave the laptop.** The app and `llama-server` listen only on `127.0.0.1`. The only external path is the optional Bhashini adapter, which needs both an admin switch and the user's permission for that document. Each Bhashini call is logged.
 - **Laptops get lost.** Turn on **BitLocker** (Windows disk encryption). Uploads, page images and outputs are deleted automatically after N days (default 30), and users can delete a job immediately.
 - **Untrusted files:** PDFs are parsed in the worker process with limits on memory, time and page count. We never run PDF JavaScript. Text from a document is passed to Gemma 4 only as **data to translate**. The prompt tells it to translate, never to follow instructions found in the document. The validators reject any output that isn't a translation.
+- **Model files:** pinned Hugging Face commits, SHA-256 checksums and data-only formats on laptops. No remote code ever runs on a laptop (§4.5).
 - **Team sync** shares only the glossary and translation memory, never documents. Translation memory can contain sentences from documents, so the shared folder needs the same access control as the documents themselves.
 
 **Licences.** Every component is free to use. Verify each licence on its model card before production.
@@ -536,7 +643,9 @@ The IT install guide covers silent install for pushing the app to many laptops, 
 | Qwen3.5-4B (optional) | Apache-2.0 (verify on the model card) | ✅ Free |
 | PaddleOCR, PaddleOCR-VL, RapidOCR | Apache-2.0 | ✅ Free |
 | Tesseract | Apache-2.0 | ✅ Free |
-| Ollama, llama.cpp, CTranslate2, ONNX Runtime | MIT | ✅ Free |
+| llama.cpp (`llama-server`, `llama-cpp-python`), CTranslate2, ONNX Runtime | MIT | ✅ Free |
+| `huggingface_hub` | Apache-2.0 | ✅ Free |
+| GGUF conversions on Hugging Face (ggml-org, Unsloth) | Same as the original model (Apache-2.0 for Gemma 4) | ✅ Free. Check each repo's licence tag. |
 | PyMuPDF | AGPL-3.0 (or commercial) | Fine for an internal tool, but confirm with whoever handles legal. pypdfium2 (permissive) is the drop-in alternative. |
 | Bhashini (optional) | Free Government of India service | Check its terms of use and access process before enabling |
 | NLLB-200, CometKiwi | Non-commercial | ❌ **Not used.** This is why our quality check uses back-translation instead. |
@@ -554,7 +663,9 @@ The IT install guide covers silent install for pushing the app to many laptops, 
 
 **Every test runs on a representative 8 GB laptop** (and a 12 GB one if available), measuring quality, **time** and **peak RAM**.
 
-**Candidates (all free and local):**
+The bake-off also produces the **speed and quality labels** shown in the model choice (§4.4), and decides which models go into the catalog.
+
+**Candidates (all free and local, all from Hugging Face):**
 - **Primary configurations:**
   - **Gemma 4 E2B** direct
   - **Gemma 4 E4B** direct (12 GB)
@@ -597,11 +708,11 @@ The bake-off is **rerun every quarter**. Small models are improving fast, and th
 
 | Phase | Weeks | Deliverables | Done when |
 |---|---|---|---|
-| **0. Discovery and setup** | 1 | Get **one representative 8 GB laptop**. Collect 50 sample PDFs and sort them by type A–D. Record the Copilot baseline. Seed the glossary with 100–200 terms. **Spikes on the laptop:** **Gemma 4 E2B and E4B RAM, speed and Hindi quality on 30 sentences**; IndicTrans2 int8 conversion and speed; PaddleOCR Devanagari and Tesseract on 5 scans; Gemma 4 vision on 3 bad scans. Confirm the IT install policy for Ollama. | Real speed and memory numbers recorded. Samples and baseline ready. |
-| **1. MVP** | 2–3 | FastAPI app, upload, job queue and stage-by-stage worker, model manager. Type A extraction and Tesseract OCR. Segmentation and placeholders. **IndicTrans2 quick draft plus Gemma 4 final translation through Ollama, with JSON output.** Basic validators. DOCX and side-by-side output. Minimal React UI. A start script for the test laptop. | **The team translates real Beltron documents with Gemma 4 on an 8 GB laptop** |
-| **2. Quality and fallbacks** | 3–5 | Page classifier and legacy-font conversion. Dual OCR with number cross-check, image clean-up and tables. Gemma 4 page re-read. Memory guard and profiles. All validators, back-translation, per-sentence selection, the Qwen3.5 third opinion and the circuit breaker. Consistency pass. Prompt tuning. **Bake-off on the laptop.** | Bake-off report written, defaults confirmed and acceptance criteria met |
+| **0. Discovery and setup** | 1 | Get **one representative 8 GB laptop**. Collect 50 sample PDFs and sort them by type A–D. Record the Copilot baseline. Seed the glossary with 100–200 terms. **Spikes on the laptop:** **Gemma 4 E2B and E4B RAM, speed and Hindi quality on 30 sentences**; IndicTrans2 int8 conversion and speed; PaddleOCR Devanagari and Tesseract on 5 scans; Gemma 4 vision on 3 bad scans. **Run Gemma 4 GGUF + mmproj with `llama-server.exe` on the laptop.** Choose the exact Hugging Face repos and quantisation, and record commits and checksums. Check that huggingface.co is reachable from the office. | Real speed and memory numbers recorded. Samples and baseline ready. |
+| **1. MVP** | 2–3 | FastAPI app, upload, job queue and stage-by-stage worker, model manager. Type A extraction and Tesseract OCR. Segmentation and placeholders. **IndicTrans2 quick draft plus Gemma 4 final translation through `llama-server`, with JSON output.** A first model catalog and a Hugging Face download script. Basic validators. DOCX and side-by-side output. Minimal React UI. A start script for the test laptop. | **The team translates real Beltron documents with Gemma 4 on an 8 GB laptop** |
+| **2. Quality and fallbacks** | 3–5 | Page classifier and legacy-font conversion. Dual OCR with number cross-check, image clean-up and tables. Gemma 4 page re-read. Memory guard and profiles. **Model choice (Auto, Fast, Balanced, Best quality).** All validators, back-translation, per-sentence selection, the Qwen3.5 third opinion and the circuit breaker. Consistency pass. Prompt tuning. **Bake-off on the laptop.** | Bake-off report written, defaults confirmed and acceptance criteria met |
 | **3. Review and reuse** | 5–6 | Sentence editor with live updates from draft to final, "Re-translate with…", "Re-read this page carefully", translation memory, glossary admin and **team sync** | Corrections reach every laptop |
-| **4. Packaging and hardening** | 6–8 | **Windows installer** (with Ollama and Gemma 4), portable `llama.cpp` build, offline bundle. Retention and auto-delete. Layout-preserving PDF. Notifications. Settings page. Optional Bhashini adapter, if approved. User guide and IT install guide. **Pilot on 3–5 team laptops.** | **Go-live** |
+| **4. Packaging and hardening** | 6–8 | **Windows installer and portable build** (with `llama-server.exe`), **first-run model download**, **Settings, Models page**, and the **offline model pack builder**. Retention and auto-delete. Layout-preserving PDF. Notifications. Settings page. Optional Bhashini adapter, if approved. User guide and IT install guide. **Pilot on 3–5 team laptops.** | **Go-live** |
 | **5. Later (optional)** | n/a | English → Hindi for replies, other Indian languages, a shared workstation profile with Gemma 4 26B or 31B if a bigger machine becomes available | Prioritised by usage |
 
 ---
@@ -614,7 +725,10 @@ The bake-off is **rerun every quarter**. Small models are improving fast, and th
 | **Not enough free RAM for Gemma 4** (Teams, Chrome tabs) | The laptop lags, or Gemma can't load | The memory guard. Gemma 4 loads only for its stage. Falls back to IndicTrans2 automatically, and the app suggests closing other apps. |
 | **Small Gemma 4 models are weaker at Hindi than expected** | Lower quality than IndicTrans2 alone | Every sentence is checked against the IndicTrans2 draft and the better one wins. The bake-off measures this, and the chain order is one config line. |
 | **An LLM drops, adds or merges content** | Silent errors | Numbered JSON output, a completeness check, length ratio, number and placeholder checks, and the back-translation score. Any failed sentence is replaced by the IndicTrans2 draft. |
-| IT blocks Ollama or software installation | No rollout | The portable `llama.cpp` build. Involve IT in week 1 (question 4). |
+| IT blocks software installation, or antivirus flags `llama-server.exe` | No rollout | A portable build that needs no admin rights. An antivirus exclusion for the app folder. `llama-cpp-python` as the in-process fallback. Involve IT in week 1 (question 4). |
+| **huggingface.co blocked, or slow downloads in the office** | Models can't be installed | The **offline model pack** from a shared drive or USB. Each laptop never needs to download on its own. |
+| **An upstream Hugging Face repo changes or disappears** | Different or missing model | Pinned commits and checksums. A copy of every pinned file is kept in our own model pack on the shared drive. |
+| **Users pick a slow or unsuitable model** | Long waits or weaker results | Auto as the default, clear speed and quality labels, greyed-out options that don't fit, and fallbacks that work whatever the choice |
 | Hard scans and handwriting | Missing or wrong text | Dual OCR with number cross-check, the Gemma 4 re-read with checks, and human review |
 | IndicTrans2 doesn't convert to CTranslate2 | Slower quick draft | ONNX Runtime int8, or PyTorch dynamic int8. Tested in Phase 0. |
 | Glossaries and memories drift apart across laptops | Inconsistent terminology | Team sync through a shared folder or a sync file |
@@ -627,8 +741,8 @@ The bake-off is **rerun every quarter**. Small models are improving fast, and th
 
 ## 16. Next steps (this week)
 
-1. Share this plan with Vikram and get answers to the **open questions** in §2, especially the **laptop models**, the **IT policy on Ollama**, and whether **10–20 minutes for the final version** is acceptable.
-2. **Get one representative 8 GB laptop** and run the Gemma 4 E2B speed and memory test first, since it is the biggest unknown.
+1. Share this plan with Vikram and get answers to the **open questions** in §2, especially the **laptop models**, **whether huggingface.co is reachable** (or whether we use the offline model pack), and whether **10–20 minutes for the final version** is acceptable.
+2. **Get one representative 8 GB laptop.** Download Gemma 4 E2B (GGUF) from Hugging Face and run it with `llama-server.exe`, to test speed and memory first, since this is the biggest unknown.
 3. Collect about 50 sample Beltron PDFs and keep the Copilot output for 15 of them.
 4. Find a bilingual reviewer for about 2 days in Phase 0 and Phase 2.
 
@@ -673,7 +787,11 @@ The bake-off is **rerun every quarter**. Small models are improving fast, and th
 
 - Gemma 4 release (Apache-2.0; E2B, E4B, 26B MoE and 31B; image input on all sizes): <https://alternativeto.net/news/2026/4/google-releases-gemma-4-open-weight-ai-models-with-apache-2-0-license>
 - Gemma 4 memory needs when run locally (Unsloth): <https://unsloth.ai/docs/models/gemma-4>
-- Gemma 4 with Ollama, QAT tag sizes: <https://codersera.com/blog/how-to-run-gemma-4-with-ollama-setup-guide/amp/>
+- Gemma 4 E2B GGUF for llama.cpp (ggml-org): <https://huggingface.co/ggml-org/gemma-4-E2B-it-GGUF>
+- Gemma 4 E4B GGUF (Unsloth): <https://huggingface.co/unsloth/gemma-4-e4b-it-GGUF>
+- Gemma 4 licence and Hugging Face access (Apache-2.0, reported ungated): <https://vorplabs.com/models/gemma-license>
+- IndicTrans2 Indic→English 1B on Hugging Face (MIT): <https://huggingface.co/ai4bharat/indictrans2-indic-en-1B>
+- Gemma 4 model sizes (QAT builds): <https://codersera.com/blog/how-to-run-gemma-4-with-ollama-setup-guide/amp/>
 - Gemma 4 E4B memory in practice (16 GB Mac mini): <https://brain.ansonbiggs.com/Gemma-4-on-M4-Mac-Mini>
 - IndicTrans2 paper: <https://arxiv.org/pdf/2305.16307>
 - Hindi chrF++ comparison of IndicTrans2, Sarvam-Translate and TranslateGemma (on a competitor's model card, so treat with care): <https://huggingface.co/bodhan-ai/indic-translate>
