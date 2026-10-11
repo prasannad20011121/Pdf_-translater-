@@ -1,0 +1,20 @@
+# Optional: 16 GB+ RAM or an NVIDIA GPU. Never picked automatically.
+name: workstation
+label: "Workstation"
+ram_budget_gb: 24
+cpu_threads: auto
+default_choice: auto
+choices:
+  auto: gemma4-e4b
+  fast: null
+  balanced: gemma4-e2b
+  best: gemma4-e4b
+step_down: [gemma4-e4b, gemma4-e2b]
+quick_draft_model: indictrans2-indic-en-1b
+low_memory_draft_model: indictrans2-indic-en-200m
+llm:
+  ctx: 8192
+  temperature: 0.2
+  paragraph_max_sentences: 12
+  timeout_s_per_sentence: 60
+limits: { max_mb: 100, max_pages: 300, retention_days: 30 }

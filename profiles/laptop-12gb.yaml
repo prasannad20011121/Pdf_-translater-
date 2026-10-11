@@ -1,0 +1,20 @@
+# 12 GB RAM laptop, no graphics card. App peak memory target: ~7 GB.
+name: laptop-12gb
+label: "12 GB laptop"
+ram_budget_gb: 7
+cpu_threads: auto
+default_choice: auto
+choices:
+  auto: gemma4-e4b
+  fast: null
+  balanced: gemma4-e2b
+  best: gemma4-e4b
+step_down: [gemma4-e4b, gemma4-e2b]
+quick_draft_model: indictrans2-indic-en-1b
+low_memory_draft_model: indictrans2-indic-en-200m
+llm:
+  ctx: 6144
+  temperature: 0.2
+  paragraph_max_sentences: 10
+  timeout_s_per_sentence: 120
+limits: { max_mb: 50, max_pages: 100, retention_days: 30 }

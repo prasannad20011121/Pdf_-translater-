@@ -1,0 +1,77 @@
+# Tested model catalog. Users can only choose models listed here (PLAN.md §4.4, §4.5).
+# Repo commits ("revision") and sha256 checksums are pinned during Phase 0;
+# until then revision "main" is used and checksums are recorded on first download.
+
+- id: gemma4-e2b
+  label: "Gemma 4 E2B"
+  kind: llama-gguf
+  source:
+    hf_repo: ggml-org/gemma-4-E2B-it-GGUF
+    revision: main
+  files:
+    model: { name: gemma-4-E2B-it-Q4_K_M.gguf, sha256: null }
+    mmproj: { name: mmproj-gemma-4-E2B-it-f16.gguf, sha256: null }
+  extra_args: []
+  ram_gb: 4.0
+  min_profile: laptop-8gb
+  licence: Apache-2.0
+  roles: [translate, reread]
+
+- id: gemma4-e4b
+  label: "Gemma 4 E4B"
+  kind: llama-gguf
+  source:
+    hf_repo: unsloth/gemma-4-e4b-it-GGUF
+    revision: main
+  files:
+    model: { name: gemma-4-e4b-it-Q4_K_M.gguf, sha256: null }
+    mmproj: { name: mmproj-F16.gguf, sha256: null }
+  extra_args: []
+  ram_gb: 6.5
+  min_profile: laptop-12gb
+  licence: Apache-2.0
+  roles: [translate, reread]
+
+- id: indictrans2-indic-en-1b
+  label: "IndicTrans2 1B (Indic to English)"
+  kind: indictrans2-hf
+  source:
+    hf_repo: ai4bharat/indictrans2-indic-en-1B
+    revision: main
+  allow_patterns: ["*.json", "*.py", "*.safetensors", "*.model", "*.txt", "dict.*"]
+  src_lang: hin_Deva
+  tgt_lang: eng_Latn
+  ram_gb: 1.8
+  min_profile: laptop-8gb
+  licence: MIT
+  roles: [draft]
+
+- id: indictrans2-indic-en-200m
+  label: "IndicTrans2 200M (Indic to English, distilled)"
+  kind: indictrans2-hf
+  source:
+    hf_repo: ai4bharat/indictrans2-indic-en-dist-200M
+    revision: main
+  allow_patterns: ["*.json", "*.py", "*.safetensors", "*.model", "*.txt", "dict.*"]
+  src_lang: hin_Deva
+  tgt_lang: eng_Latn
+  ram_gb: 0.8
+  min_profile: laptop-8gb
+  licence: MIT
+  roles: [draft]
+
+- id: dev-standin-draft
+  label: "Dev stand-in (draft)"
+  kind: dev
+  ram_gb: 0.0
+  min_profile: dev
+  licence: n/a
+  roles: [draft]
+
+- id: dev-standin-llm
+  label: "Dev stand-in (final)"
+  kind: dev
+  ram_gb: 0.0
+  min_profile: dev
+  licence: n/a
+  roles: [translate]

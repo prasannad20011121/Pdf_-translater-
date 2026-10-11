@@ -1,0 +1,19 @@
+# 8 GB RAM laptop, no graphics card. App peak memory target: ~4.5 GB.
+name: laptop-8gb
+label: "8 GB laptop"
+ram_budget_gb: 4.5
+cpu_threads: auto            # cores - 1
+default_choice: auto
+choices:                     # user-facing choice -> catalog model id (null = IndicTrans2 only)
+  auto: gemma4-e2b
+  fast: null
+  balanced: gemma4-e2b
+step_down: [gemma4-e2b]      # Auto tries these in order when memory is short, then IndicTrans2 only
+quick_draft_model: indictrans2-indic-en-1b
+low_memory_draft_model: indictrans2-indic-en-200m
+llm:
+  ctx: 6144
+  temperature: 0.2
+  paragraph_max_sentences: 10
+  timeout_s_per_sentence: 90
+limits: { max_mb: 50, max_pages: 100, retention_days: 30 }

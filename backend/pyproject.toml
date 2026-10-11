@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pdf-translator"
+version = "0.1.0"
+description = "Local Hindi to English PDF translator for 8-12 GB laptops"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.29",
+    "sqlalchemy>=2.0",
+    "pydantic>=2.6",
+    "pyyaml>=6.0",
+    "pymupdf>=1.24",
+    "python-docx>=1.1",
+    "psutil>=5.9",
+    "httpx>=0.27",
+    "python-multipart>=0.0.9",
+    "pillow>=10.0",
+    "pytesseract>=0.3.10",
+    "huggingface_hub>=0.23",
+]
+
+[project.optional-dependencies]
+# IndicTrans2 quick draft (CPU). Heavy, so optional during UI development.
+indictrans2 = ["torch", "transformers", "sentencepiece", "IndicTransToolkit"]
+dev = ["pytest>=8"]
+
+[tool.setuptools.packages.find]
+include = ["app*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
