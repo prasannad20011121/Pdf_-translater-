@@ -2,23 +2,24 @@
 
 > **Request (Vikram Chandra):** We get many documents from Beltron, all in Hindi. We need a small web page where anyone on the team can upload a PDF and get it translated. Today this is done by hand with Copilot, which sometimes won't accept the upload.
 >
-> **Added requirements:** it runs **locally** (our own machine and network), it has **fallbacks**, and the translation quality is the **best available**.
+> **Added requirements:** it runs **locally** (our own machine and network), it uses **only free or local models (no paid APIs)**, it has **fallbacks**, and the translation quality is the **best available**.
 
 | | |
 |---|---|
-| Status | Draft v1, for review |
+| Status | Draft v2, for review |
 | Date | 2026-10-11 |
 | Scope | Hindi (including Hindi mixed with English) to English. The design leaves room for English to Hindi and other Indian languages later. |
+| Changes in v2 | Removed every paid cloud API (Claude, Google, Azure). Their fallback role now goes to a **second local model** from a different model family, plus a **slower, more accurate local mode** for hard scans. Bhashini, the free Government of India API, remains as an **optional** external fallback that is off by default. |
 
 ---
 
 ## 1. Summary
 
 - **What we build:** an internal web app that runs on one office workstation. Users drag in a PDF, watch its progress, review the English side by side with the original, and download a Word file, a PDF that keeps the original layout, or plain text.
-- **Local by default:** every model runs on our hardware. After installation no document leaves the network. The cloud is an optional last fallback. It is off by default, and a user has to allow it for each document.
+- **Free and local only:** every model is open-weight with a free licence and runs on our own hardware. There are **no paid APIs and no per-page charges**, and software cost is zero. After installation no document leaves the network. The only optional external service is Bhashini, which is free, run by the Government of India, and off unless an admin turns it on.
 - **Translation engine:** **IndicTrans2** produces a first translation. It is the strongest open-source Hindi-to-English model in the published comparisons we found, and it has an MIT licence. A **local LLM** then edits that draft to use document context, our government terminology glossary and natural English. A validator checks each sentence before we accept it.
 - **The OCR and text-extraction step matters most.** Bihar government PDFs often use legacy fonts such as Kruti Dev, or are scans, and in both cases plain copy-paste gives gibberish. Most quality problems start there, so the pipeline sorts pages by type and uses a different extraction method for each.
-- **Fallbacks at every step:** each stage has 2–4 engines. A job always finishes. In the worst case one sentence is marked "needs human review". A document is never just reported as failed.
+- **Fallbacks at every step:** each stage has 2–4 **local** engines. When the main model fails, a second local model from a different family (Qwen, then Gemma) takes over. If the GPU fails, CPU engines take over. A job always finishes. In the worst case one sentence is marked "needs human review". A document is never just reported as failed.
 - **"Best in market" is something we measure:** before choosing the defaults, we run a blind test on 30–50 real Beltron documents against today's Copilot output. Engines are plug-ins, so changing one is a config change.
 - **Timeline for one developer:** a working MVP in about 2 weeks, ready for production in about 6–7 weeks.
 
@@ -41,7 +42,7 @@
 
 | ID | Requirement |
 |---|---|
-| N1 | **Local:** runs on our own premises and works with no internet after installation. |
+| N1 | **Free and local:** only free, openly licensed models running on our own hardware. No paid APIs or subscriptions. Works with no internet after installation. |
 | N2 | **Fallback:** no single failure (a crashed model, a full GPU, a bad scan or a strange font) stops a translation. |
 | N3 | **Quality:** in a blind review, preferred over the current Copilot output. **No errors in numbers, dates or reference numbers.** |
 | N4 | **Privacy:** login, automatic deletion after N days, and an audit log of which engine processed which document. |
@@ -56,7 +57,7 @@
 ### Open questions for Vikram and the team
 
 1. What are the actual volume and typical page counts?
-2. Is cloud processing **ever** allowed, for example for non-confidential documents with a user's approval? Or must everything stay local?
+2. May we use **Bhashini** (the free Government of India language API) as an optional fallback for non-confidential documents? Or must everything stay strictly offline? The plan works either way. Bhashini is off by default.
 3. Is there a machine with an NVIDIA GPU we can use, or do we need to buy one? (See §11.)
 4. Which output do people use most: an editable Word file or a PDF that looks like the original?
 5. Will we need **English to Hindi** later, for drafting replies to Beltron? Do we need any other languages, such as Urdu or Maithili? IndicTrans2 covers both.
@@ -86,19 +87,25 @@ Other complications:
 
 ## 4. Recommended engines (October 2026)
 
-These are the **starting choices**. The blind test in Phase 2 (§13) decides the final defaults. Every engine sits behind the same interface, so swapping one is a config change.
+These are the **starting choices**. The blind test in Phase 2 (§13) decides the final defaults. **Every component is free, with an open licence, and runs locally.** Every engine sits behind the same interface, so swapping one is a config change.
 
-| Stage | Primary (local) | Fallbacks, in order | Why |
+| Stage | Primary (local) | Local fallbacks, in order | Why |
 |---|---|---|---|
 | PDF parsing | **PyMuPDF** | pypdfium2 | Fast. Gives text, font names, layout boxes and table detection. |
 | Legacy font conversion | **legacylipi** (Kruti Dev) plus our own mapping tables | OCR the page | Kruti Dev and similar fonts are everywhere in Bihar government documents. |
-| OCR | **Qwen3-VL-8B-Instruct** (GPU, via vLLM or Ollama) | **Tesseract 5** `hin+eng` with `tessdata_best` (CPU) → cloud OCR (opt-in) | A June 2026 Devanagari OCR benchmark found Qwen3-VL-8B was the best **open** model on real Hindi scans. Tesseract is light, runs on CPU and is reliable. |
+| OCR | **Qwen3-VL-8B-Instruct** (GPU, via vLLM or Ollama) | **Accurate mode** (same GPU, slower): Qwen3-VL-32B, or the vision input of Gemma 4 31B → **Tesseract 5** `hin+eng` with `tessdata_best` (CPU) | A June 2026 Devanagari OCR benchmark found Qwen3-VL-8B was the best **open** model on real Hindi scans. A larger model, or a different model family, catches pages the 8B misreads. Tesseract runs on CPU and keeps working when the GPU is down. |
 | Machine translation | **IndicTrans2 1B, Indic→English** (CTranslate2, int8 or fp16) | IndicTrans2 distilled 200M (CPU) | The strongest open Hindi-to-English model in published comparisons. It has an MIT licence and runs on CPU. |
-| Context, terminology and fluency | **Local LLM post-edit**: Qwen3.6-27B or Gemma 4 (26B MoE or 31B), via Ollama or vLLM | Skip this step and keep the IndicTrans2 draft | Makes terminology consistent across the whole document and produces formal English in the style of government correspondence. |
-| Direct translation, sentence by sentence | The same local LLM | Next engine in the chain | Used when the IndicTrans2 output fails validation, for example on long table cells or heavy code-mixing. |
-| Cloud (opt-in, last resort) | **Claude** API (`claude-opus-5-5` for best quality, `claude-sonnet-5-5` for lower cost). It reads PDF pages directly, so OCR and translation happen in one call. | Bhashini (Government of India), Google Cloud Translation, Azure Translator | Frontier cloud models led the 2026 Devanagari scan benchmark. Useful for very poor scans and handwriting. |
+| Context, terminology and fluency | **Local LLM post-edit**: Qwen3.6-27B, via Ollama or vLLM | Skip this step and keep the IndicTrans2 draft | Makes terminology consistent across the whole document and produces formal English in the style of government correspondence. |
+| Direct translation, sentence by sentence | The same local LLM (Qwen3.6-27B) | **Second local LLM** from a different family: Gemma 4 (31B dense or 26B MoE), or Sarvam-30B | Used when the IndicTrans2 output fails validation, for example on long table cells or heavy code-mixing. A second model family is unlikely to make the same mistake. |
+| Optional free external service (**off by default**) | **Bhashini** (Government of India, MeitY): free translation and OCR APIs | Keep the Hindi and flag it for a human | Useful only for documents that may leave our network, and only if an admin turns it on **and** the user allows it for that document. Its translation models include AI4Bharat's (the IndicTrans2 group), so its main value is being available when our hardware isn't. Access terms still need checking. |
 
-**Other candidates for the blind test:** Sarvam-30B (Apache-2.0, built in India), TranslateGemma (12B/27B) and Sarvam-Translate.
+**Other candidates for the blind test:** Sarvam-30B (Apache-2.0, built in India), TranslateGemma (12B/27B) and Sarvam-Translate. All are free and open-weight.
+
+**Excluded by the "free or local" rule:**
+- Paid APIs: Claude, GPT, Gemini, Google Cloud Translation, Azure Translator and DeepL.
+- The **free tiers** of commercial APIs. Their terms may let the provider use what we send to improve their products, and their quotas can change without notice. Neither is acceptable for Beltron documents or for a fallback we depend on.
+
+**What we give up:** in the 2026 Devanagari OCR benchmark, frontier cloud models (Gemini, Claude) beat the best open model on the hardest real scans. Without them, we narrow that gap with the accurate mode and the second model family (above), and **human review** handles the rest, especially handwriting. The bake-off (§13) measures how much of a gap remains on our own documents. The confidence colours (§7.3) send reviewers straight to those sentences.
 
 **Why both a translation model and an LLM?** A dedicated translation model like IndicTrans2 is faithful and predictable, but it works one sentence at a time and knows nothing about our terminology. An LLM understands context and style, but it sometimes "improves" the meaning. Combining them, with a validator in between, gives the best of both. **The fallback is built in:** if the LLM is down, slow or fails validation, we ship the IndicTrans2 draft. If the blind test shows the LLM edit doesn't beat IndicTrans2 with the glossary alone, we switch it off. That is a config flag.
 
@@ -116,11 +123,11 @@ flowchart LR
   W <--> FS
   W --> IT2["IndicTrans2 (CTranslate2)"]
   W --> TES["Tesseract hin+eng"]
-  W --> LLM["Ollama / vLLM: Qwen3-VL-8B OCR, LLM post-edit"]
-  W -. "opt-in only" .-> CL["Cloud adapters: Claude / Bhashini"]
+  W --> LLM["Ollama / vLLM: Qwen3-VL OCR, Qwen3.6 + Gemma 4 LLMs"]
+  W -. "only if admin enables" .-> BH["Bhashini (free govt API)"]
 ```
 
-- **One machine, a few containers:** `app` (API and UI), `worker` (pipeline), `llm` (Ollama or vLLM) and `proxy` (Caddy). IndicTrans2 and Tesseract run inside the worker.
+- **One machine, a few containers:** `app` (API and UI), `worker` (pipeline), `llm` (Ollama or vLLM) and `proxy` (Caddy). IndicTrans2 and Tesseract run inside the worker. All models are open-weight and free.
 - **Durable job queue in SQLite:** a jobs table plus a worker that polls it. No Redis is needed at this scale. Every page and sentence is saved as soon as it is processed, so a crash resumes where it stopped instead of starting over. If we outgrow one worker machine, we can move to Redis with RQ or Arq.
 - **Progress** reaches the browser through Server-Sent Events.
 - **Models are downloaded once** into `models/`, with checksums, so the system runs offline.
@@ -141,11 +148,15 @@ flowchart TD
   Q -- no --> O1["OCR: Qwen3-VL-8B (GPU)"]
   O1 --> Q2{"OCR quality OK?"}
   Q2 -- yes --> SEG
-  Q2 -- "no / GPU down" --> O2["OCR: Tesseract hin+eng (CPU)"]
+  Q2 -- "low quality" --> O1B["Accurate mode: Qwen3-VL-32B / Gemma 4 vision (GPU)"]
+  Q2 -- "GPU down" --> O2
+  O1B --> Q2B{"OK?"}
+  Q2B -- yes --> SEG
+  Q2B -- no --> O2["OCR: Tesseract hin+eng (CPU)"]
   O2 --> Q3{"OK?"}
   Q3 -- yes --> SEG
-  Q3 -- "no, cloud allowed" --> O3["Cloud OCR (opt-in)"] --> SEG
-  Q3 -- "no, local only" --> SEGF["Segment, page flagged low-confidence"]
+  Q3 -- no --> BEST["Keep best-scoring OCR attempt, flag page low-confidence"]
+  BEST --> SEGF["Segment"]
   SEG --> MT["Translate (see §7)"]
   SEGF --> MT
   MT --> RND["Render: DOCX / side-by-side / layout PDF / TXT"]
@@ -160,6 +171,7 @@ flowchart TD
    - **Type A:** PyMuPDF gives text in reading order, plus tables via `find_tables()`.
    - **Type B:** convert the legacy font, then check the dictionary hit rate again.
    - **Type C/D:** first clean up the image (deskew, denoise, adaptive binarisation with OpenCV). Then run OCR. Qwen3-VL is prompted to return Markdown with tables, and to mark stamps, signatures and handwriting as `[STAMP]`, `[SIGNATURE]` and `[HANDWRITTEN: …]`.
+   - If the page still scores low, it goes to the **accurate mode**: the larger Qwen3-VL-32B, or Gemma 4's vision input. If every engine scores low, we keep the attempt with the highest dictionary hit rate and flag the page.
    - **Number cross-check on scans:** Tesseract is cheap, so it always runs as a second reader. Numbers, dates and reference numbers must match between the two OCR engines, or the sentence is flagged amber. This catches the occasional number a vision model invents.
 4. **Normalise.**
    - Unicode NFC, consistent nukta forms and Devanagari digits converted to ASCII digits.
@@ -184,8 +196,8 @@ flowchart TD
 | Layer | 1st choice | 2nd | 3rd | Last resort | Moves to next when |
 |---|---|---|---|---|---|
 | Text extraction | Native (PyMuPDF) | Legacy-font conversion | OCR | n/a | Low dictionary hit rate, or a known legacy font |
-| OCR | Qwen3-VL-8B (GPU) | Tesseract (CPU) | Cloud (opt-in) | Mark the page low-confidence and continue | Engine down or timed out, low dictionary hit rate, or numbers disagree |
-| Translation | IndicTrans2 + LLM post-edit | IndicTrans2 alone | LLM direct translation | Cloud (opt-in), then keep the Hindi and **flag it red** | Validator fails, timeout, or engine unhealthy |
+| OCR | Qwen3-VL-8B (GPU) | Accurate mode: Qwen3-VL-32B or Gemma 4 vision (GPU) | Tesseract (CPU) | Keep the best-scoring attempt and mark the page low-confidence | Engine down or timed out, low dictionary hit rate, or numbers disagree |
+| Translation | IndicTrans2 + LLM post-edit (Qwen3.6-27B) | IndicTrans2 alone | Direct translation by Qwen3.6-27B, then by **Gemma 4** (second family) | Bhashini (only if an admin enabled it **and** the user allowed it for this document), then keep the Hindi and **flag it red** | Validator fails, timeout, or engine unhealthy |
 | Hardware | GPU | CPU (IndicTrans2 int8 + Tesseract) | n/a | n/a | GPU out of memory, or the LLM server is unavailable |
 | Output | Layout PDF | DOCX | HTML side-by-side | TXT | A render error or text overflow on a page. TXT is always produced. |
 
@@ -197,7 +209,7 @@ flowchart TD
   TM -- yes --> OK["Accept"]
   TM -- no --> D["IndicTrans2 draft"]
   D --> V1{"Draft valid?"}
-  V1 -- no --> LD["LLM direct translation"]
+  V1 -- no --> LD["Direct translation: Qwen3.6-27B"]
   V1 -- yes --> R{"LLM post-edit enabled + healthy?"}
   R -- no --> OKD["Accept draft"]
   R -- yes --> PE["LLM post-edit (glossary + context)"]
@@ -206,11 +218,14 @@ flowchart TD
   V2 -- no --> OKD
   LD --> V3{"Valid?"}
   V3 -- yes --> OK
-  V3 -- no --> C{"Cloud allowed for this document?"}
-  C -- yes --> CL["Cloud engine"] --> V4{"Valid?"}
+  V3 -- no --> L2["Direct translation: Gemma 4 (second local family)"]
+  L2 --> V4{"Valid?"}
   V4 -- yes --> OK
-  V4 -- no --> FLAG["Keep Hindi, mark RED: needs human"]
-  C -- no --> FLAG
+  V4 -- no --> B{"Bhashini enabled + allowed for this document?"}
+  B -- yes --> BH["Bhashini (free)"] --> V5{"Valid?"}
+  V5 -- yes --> OK
+  V5 -- no --> FLAG["Keep Hindi, mark RED: needs human"]
+  B -- no --> FLAG
 ```
 
 ### 7.3 Validators (these decide when to fall back)
@@ -252,15 +267,16 @@ Reviewers only need to read the amber and red sentences.
 
 1. **Fix extraction first** (§3, §6). Clean Unicode input is the biggest single gain.
 2. **Specialist translation model plus LLM editing** (§4), with the validator in between.
-3. **Glossary**, editable in the UI and seeded with Beltron and Bihar government terms (Appendix A). It is enforced through placeholders for IndicTrans2 and through the prompt for the LLM, then checked by validator 6.
-4. **Translation memory:** every approved sentence pair is stored.
+3. **Local ensemble for hard sentences.** This replaces a cloud model and costs nothing. For a sentence that comes out amber, we generate candidates from IndicTrans2, Qwen3.6 and Gemma 4. Candidates must pass the validators, and we keep the one with the best back-translation score. Running three models is slower, so we only do it for amber sentences, which we expect to be a small share. Phase 2 measures the real share.
+4. **Glossary**, editable in the UI and seeded with Beltron and Bihar government terms (Appendix A). It is enforced through placeholders for IndicTrans2 and through the prompt for the LLM, then checked by validator 6.
+5. **Translation memory:** every approved sentence pair is stored.
    - Exact matches are reused directly.
    - Close matches are passed to the LLM as examples.
    - Beltron letters follow standard formats ("सूचनार्थ एवं आवश्यक कार्रवाई हेतु प्रेषित"), so the memory improves quickly over the first weeks.
-5. **Document context:** the LLM sees the document's subject line and the previous sentences. That keeps names, designations and terms consistent from start to finish.
-6. **Register:** the LLM is instructed to write formal Indian-English government style. It keeps Indian units (lakh, crore, Rs.) and standard forms ("Memo No.", "Copy forwarded to …", "By order").
-7. **Human in the loop:** reviewers correct amber and red sentences in the UI. Their corrections feed the translation memory, so the system improves with use.
-8. **Measure, don't guess:** blind tests and regression checks (§13). The same golden set is rerun whenever a model changes.
+6. **Document context:** the LLM sees the document's subject line and the previous sentences. That keeps names, designations and terms consistent from start to finish.
+7. **Register:** the LLM is instructed to write formal Indian-English government style. It keeps Indian units (lakh, crore, Rs.) and standard forms ("Memo No.", "Copy forwarded to …", "By order").
+8. **Human in the loop:** reviewers correct amber and red sentences in the UI. Their corrections feed the translation memory, so the system improves with use.
+9. **Measure, don't guess:** blind tests and regression checks (§13). The same golden set is rerun whenever a model changes.
 
 **LLM post-edit prompt (sketch):**
 ```
@@ -280,11 +296,11 @@ User: SUBJECT: <doc subject> | PREVIOUS: <last 2 translated sentences>
 
 | Page | Features |
 |---|---|
-| **Upload** | Drag and drop one or more PDFs. Choose outputs (DOCX, layout PDF, side-by-side). Choose a glossary. A checkbox **"Allow cloud fallback for this document"**, off by default and shown with a clear warning (hidden entirely if an admin disables cloud). |
+| **Upload** | Drag and drop one or more PDFs. Choose outputs (DOCX, layout PDF, side-by-side). Choose a glossary. **Quality mode:** *Standard*, or *Accurate* (always uses the larger local OCR model and the ensemble, about 2× slower), for very poor scans. If an admin has enabled Bhashini, a checkbox **"Allow Bhashini fallback for this document"** appears, off by default and shown with a clear warning. |
 | **Jobs** | A list with status, a progress bar for each page, counts of segments needing review, download buttons and a delete button. |
 | **Review** | The original page image (pdf.js) on the left and the English on the right, colour-coded by confidence. Click a sentence to edit it, approve it, or **"Re-translate with…"** another engine. Edits update the outputs and the translation memory. Includes "Copy all English". |
 | **Glossary** | Add, edit, import and export CSV. Shows usage counts. |
-| **Admin** | Engine health, queue length, fallback rate, disk usage, retention settings, cloud on/off and users. |
+| **Admin** | Engine health, queue length, fallback rate, disk usage, retention settings, Bhashini on/off (off by default) and users. |
 
 The interface is in English with Hindi labels where helpful. It is designed to work for non-technical staff with zero training.
 
@@ -297,10 +313,11 @@ The interface is in English with Hindi labels where helpful. It is designed to w
 | Backend | Python 3.12, FastAPI, Pydantic, SQLAlchemy and SQLite (WAL mode) |
 | Worker | A separate Python process using the same codebase and a durable queue stored in the database |
 | PDF | PyMuPDF (pypdfium2 as fallback), OpenCV for image clean-up |
-| OCR | Qwen3-VL-8B via vLLM or Ollama (OpenAI-compatible API), Tesseract 5 via `pytesseract` |
+| OCR | Qwen3-VL-8B, with Qwen3-VL-32B or Gemma 4 vision in accurate mode, via vLLM or Ollama (OpenAI-compatible API). Tesseract 5 via `pytesseract`. |
 | Translation | IndicTrans2 via CTranslate2 plus IndicTransToolkit, and the Indic NLP Library for splitting sentences |
+| LLMs | Qwen3.6-27B (primary) and Gemma 4 31B or 26B MoE (second family), all open-weight and free |
 | LLM serving | **Ollama** (simplest, works on Windows and Linux) or **vLLM** (more throughput on a GPU server) |
-| Cloud adapters | `anthropic` Python SDK (Claude), Bhashini REST, optionally Google or Azure |
+| External (optional) | Bhashini REST adapter only, off by default. **No paid-API SDKs are installed.** |
 | Outputs | python-docx and PyMuPDF |
 | Frontend | React, Vite, TypeScript and pdf.js, served as static files by FastAPI |
 | Deployment | Docker Compose plus Caddy (automatic HTTPS on the LAN) |
@@ -317,10 +334,10 @@ pdf-translator/
 │   │   └── pipeline/
 │   │       ├── classify.py         # page type A/B/C/D
 │   │       ├── extract.py          # native text + legacy-font conversion
-│   │       ├── ocr/                # base.py, qwen_vl.py, tesseract.py, cloud.py
+│   │       ├── ocr/                # base.py, vlm.py (Qwen3-VL / Gemma 4), tesseract.py
 │   │       ├── segment.py          # sentence split + placeholder protection
 │   │       ├── translate/          # base.py, indictrans2.py, llm_postedit.py,
-│   │       │                       # llm_direct.py, claude.py, bhashini.py
+│   │       │                       # llm_direct.py (any local LLM), ensemble.py, bhashini.py
 │   │       ├── validate.py         # validators + confidence scoring
 │   │       ├── chain.py            # fallback runner + circuit breaker
 │   │       └── render/             # docx.py, layout_pdf.py, html.py, txt.py
@@ -336,22 +353,23 @@ pdf-translator/
 ```python
 class Translator(Protocol):
     name: str
-    is_cloud: bool
+    is_external: bool        # True only for Bhashini; gated by admin + per-document switch
     def health(self) -> bool: ...
     def translate(self, segs: list[Segment], ctx: DocContext) -> list[Candidate]: ...
 ```
 
 **Configuration.** The chains are defined in config, not in code:
 ```yaml
-translation_chain: [indictrans2_postedit, indictrans2, llm_direct, claude, passthrough]
-ocr_chain:         [qwen3_vl, tesseract, claude]
-cloud:
-  enabled: false          # admin master switch; users must also opt in per document
-  claude_model: claude-opus-5-5
-llm:
+translation_chain: [indictrans2_postedit, indictrans2, llm_direct_primary, llm_direct_secondary, bhashini, passthrough]
+ocr_chain:         [vlm_standard, vlm_accurate, tesseract]
+llm:                       # all local, all free (Ollama tags shown; exact tags confirmed in Phase 0)
   endpoint: http://llm:11434/v1
-  postedit_model: qwen3.6:27b
+  primary_model: qwen3.6:27b       # post-edit + direct translation
+  secondary_model: gemma4:31b      # second family: direct translation, ensemble, accurate-mode OCR
   ocr_model: qwen3-vl:8b
+  ocr_accurate_model: qwen3-vl:32b
+bhashini:
+  enabled: false           # admin master switch; users must also opt in per document
 limits: { max_mb: 50, max_pages: 200, retention_days: 30 }
 ```
 
@@ -361,11 +379,21 @@ limits: { max_mb: 50, max_pages: 200, retention_days: 30 }
 
 | Tier | Example hardware | What runs | Rough speed for a 10-page document* |
 |---|---|---|---|
-| **1. CPU only** (fallback, or to start immediately) | A PC with 8+ cores, 32 GB RAM and an SSD | Tesseract, IndicTrans2 (int8). No LLM post-edit. | Digital: ~2–4 min. Scanned: ~4–8 min |
-| **2. Single-GPU workstation (recommended)** | 1× RTX 4090 or 5090 (24–32 GB), 64 GB RAM, 1 TB SSD | Everything, including Qwen3-VL OCR and the 27B LLM post-edit. The pipeline runs one **stage at a time** (OCR for the whole document, then translation, then post-edit), so Ollama loads and unloads models instead of holding them all in memory at once. | Digital: ~1–2 min. Scanned: ~3–5 min |
+| **1. CPU only** (zero cost: an existing PC) | A PC with 8+ cores, 32 GB RAM and an SSD | Tesseract, IndicTrans2 (int8). No LLM post-edit, second-family fallback or accurate mode. | Digital: ~2–4 min. Scanned: ~4–8 min |
+| **2. Single-GPU workstation (recommended)** | 1× RTX 4090 or 5090 (24–32 GB), 64 GB RAM, 1 TB SSD | Everything: Qwen3-VL OCR and accurate mode, Qwen3.6-27B post-edit, and the Gemma 4 fallback and ensemble. The pipeline runs one **stage at a time** (OCR for the whole document, then translation, then post-edit), so Ollama loads and unloads models instead of holding them all in memory at once. | Digital: ~1–2 min. Scanned: ~3–5 min. Accurate mode is about 2× slower. |
 | **3. GPU server** | 1× L40S or RTX 6000 (48 GB), or larger | All models loaded at once under vLLM, several users at the same time | Faster, and handles parallel jobs |
 
 \*These are planning estimates. We measure real numbers in Phase 0 and record them here.
+
+**Model disk space:** all the 4-bit quantised models together (Qwen3-VL-8B and 32B, Qwen3.6-27B, Gemma 4 31B, and IndicTrans2 in both directions) take roughly **70 GB**.
+
+**Cost:**
+
+| Item | Cost |
+|---|---|
+| All models and software | **0**. Every component is open-source or has an open-weight licence. |
+| Per-page or API charges | **0**. No paid APIs are used. |
+| Hardware | 0 on Tier 1 (an existing PC). One GPU workstation if we choose Tier 2, a one-time purchase. |
 
 **Installation:**
 - **Windows workstation:** Docker Desktop with WSL2 and the NVIDIA driver, Ollama installed natively, then `docker compose up`.
@@ -376,21 +404,23 @@ limits: { max_mb: 50, max_pages: 200, retention_days: 30 }
 
 ## 12. Security, privacy and licensing
 
-- **No outbound traffic by default.** Cloud adapters work only if an admin turns them on **and** a user ticks the box for that document. Each cloud call is written to the audit log.
+- **No outbound traffic.** Every model runs on our machine. The only external path is the optional Bhashini adapter, which works only if an admin turns it on **and** a user ticks the box for that document. Each Bhashini call is written to the audit log. For a strictly offline setup, leave Bhashini off, or don't install its adapter at all.
 - Login is required: local accounts in the MVP, then AD/LDAP or SSO if the organisation has it. HTTPS runs on the LAN through Caddy.
 - **Retention:** uploads, page images and outputs are deleted automatically after N days (default 30). Users can delete a job immediately.
 - **Untrusted files:** PDFs are parsed in the worker with limits on memory, time and page count. We sanitise file names and never run PDF JavaScript.
 - Backups cover the SQLite database (glossary, translation memory, audit log). Documents themselves are deliberately not backed up.
 
-**Licences** (verify every licence on its model card before production):
+**Licences.** Every component is free to use. Verify each licence on its model card before production.
 
 | Component | Licence | Note |
 |---|---|---|
-| IndicTrans2 | MIT | ✅ |
-| Qwen3-VL, Qwen3.x LLMs | Apache-2.0 | ✅ |
-| Gemma 4 | Apache-2.0 | ✅ |
-| Sarvam-30B | Apache-2.0 | ✅ |
-| Tesseract | Apache-2.0 | ✅ |
+| IndicTrans2 | MIT | ✅ Free |
+| Qwen3-VL (8B, 32B), Qwen3.x LLMs | Apache-2.0 | ✅ Free |
+| Gemma 4 | Apache-2.0 | ✅ Free |
+| Sarvam-30B | Apache-2.0 | ✅ Free |
+| Tesseract | Apache-2.0 | ✅ Free |
+| Ollama / vLLM | MIT / Apache-2.0 | ✅ Free |
+| Bhashini (optional) | Free Government of India service | Check its terms of use and access process before enabling |
 | PyMuPDF | AGPL-3.0 (or commercial) | Fine for an internal tool, but confirm with whoever handles legal. pypdfium2 (permissive) is the drop-in alternative. |
 | BabelDOC / PDFMathTranslate | AGPL-3.0 | Only if we adopt it for layout PDFs |
 | Sarvam-Translate | GPL-3.0 | Fine for internal use. We don't distribute it. |
@@ -407,15 +437,18 @@ limits: { max_mb: 50, max_pages: 200, retention_days: 30 }
 - 150–200 sentences with reference English translations.
 - Copilot outputs for 15 documents, as today's **baseline**.
 
-**Candidates to compare:**
+**Candidates to compare (all free and local):**
 - IndicTrans2 alone
 - IndicTrans2 + Qwen3.6-27B post-edit
 - IndicTrans2 + Gemma 4 post-edit
+- IndicTrans2 + the local ensemble for amber sentences
 - Qwen3.6-27B direct
+- Gemma 4 direct
 - Sarvam-30B direct
 - TranslateGemma
-- Claude, as the cloud ceiling
-- Copilot, as the baseline
+- **Copilot, as the baseline only.** We compare against today's output. It is not part of the system.
+
+**For OCR:** Qwen3-VL-8B, Qwen3-VL-32B, Gemma 4 vision and Tesseract, all scored on the 20 hand-checked scans.
 
 **Metrics:**
 - **Automatic:** chrF++ and COMET (`wmt22-comet-da`) against the references, plus OCR character error rate.
@@ -440,11 +473,11 @@ The bake-off is rerun **every quarter, and whenever a new model comes out**. Mod
 
 | Phase | Weeks | Deliverables | Done when |
 |---|---|---|---|
-| **0. Discovery and setup** | 1 | Collect 50 sample PDFs and sort them by type A–D. Record the Copilot baseline. Confirm the hardware and install drivers, Docker and Ollama. Seed the glossary with 100–200 terms. Try IndicTrans2, Qwen3-VL and Tesseract on 5 documents to measure speed. | Sample set, baseline and machine are ready |
+| **0. Discovery and setup** | 1 | Collect 50 sample PDFs and sort them by type A–D. Record the Copilot baseline. Confirm the hardware and install drivers, Docker and Ollama. Seed the glossary with 100–200 terms. Download the models and confirm the exact Ollama tags. Try IndicTrans2, Qwen3-VL, Qwen3.6, Gemma 4 and Tesseract on 5 documents to measure speed. | Sample set, baseline and machine are ready |
 | **1. MVP** | 2–3 | FastAPI app, upload, job queue and worker with SSE progress. Type A extraction and Tesseract OCR. Segmentation and placeholders. IndicTrans2. DOCX and side-by-side output. Minimal React UI. Docker Compose. | **The team translates real Beltron documents end to end on the LAN** |
-| **2. Quality and fallbacks** | 3–5 | Page classifier and legacy-font conversion. Qwen3-VL OCR, image clean-up and tables. LLM post-edit and direct translation. Validators, fallback chain and circuit breaker. Confidence colours and back-translation score. **Bake-off.** | Bake-off report written, defaults chosen and acceptance criteria met |
+| **2. Quality and fallbacks** | 3–5 | Page classifier and legacy-font conversion. Qwen3-VL OCR, accurate mode, image clean-up and tables. LLM post-edit and direct translation, with the Gemma 4 second-family fallback and the local ensemble. Validators, fallback chain and circuit breaker. Confidence colours and back-translation score. **Bake-off.** | Bake-off report written, defaults chosen and acceptance criteria met |
 | **3. Review and reuse** | 5–6 | Sentence editor, "Re-translate with…", translation memory and glossary admin | Corrections are reused automatically |
-| **4. Hardening** | 6–7 | Login and HTTPS. Retention and audit log. Opt-in cloud adapter. Layout-preserving PDF. Admin and health page. Backups. Offline install script. User and admin guides. | **Go-live** |
+| **4. Hardening** | 6–7 | Login and HTTPS. Retention and audit log. Optional Bhashini adapter, only if approved (§2, question 2). Layout-preserving PDF. Admin and health page. Backups. Offline install script. User and admin guides. | **Go-live** |
 | **5. Later (optional)** | n/a | English → Hindi for replies, other Indian languages, a watched folder for batch jobs, Outlook or e-mail intake | Prioritised by usage |
 
 ---
@@ -454,13 +487,14 @@ The bake-off is rerun **every quarter, and whenever a new model comes out**. Mod
 | Risk | Impact | Mitigation |
 |---|---|---|
 | Legacy-font variants we don't recognise | Gibberish text | The dictionary hit rate catches it and the page is sent to OCR. We add mapping tables as new fonts appear. |
-| Poor scans or handwriting | Missing or wrong text | Flagged amber or red. Optional cloud OCR. Human review. |
+| Poor scans or handwriting | Missing or wrong text | Accurate mode (a larger local vision model or a second family) and the number cross-check with Tesseract. Flagged amber or red. Human review. |
+| No paid frontier cloud model for the hardest pages | Somewhat lower quality on the worst scans and on handwriting | We accept this as the cost of the free and local rule. Accurate mode and the local ensemble narrow the gap, and the bake-off measures what remains. Confidence colours send reviewers to those sentences. We re-check with each quarterly bake-off as open models improve. |
 | LLM changes the meaning while "improving" | Silent errors | Placeholders, number and glossary validators, and the back-translation score. If post-edit fails a check we keep the IndicTrans2 draft. The bake-off decides whether post-edit stays on. |
 | No GPU budget | Slower, and less fluent English | Tier 1 (CPU) still works well with IndicTrans2 and Tesseract. Add a GPU later without code changes. |
 | A new model makes our choice outdated | Quality is no longer best in class | Plug-in engines, a quarterly bake-off, and a config change to switch. |
 | Licence problems | Legal exposure | The licence table in §12. No non-commercial models in production. |
 | Not enough reviewer time for evaluation | Weak evidence for "best" | Keep the golden set small (150–200 sentences). Review in short sessions. |
-| Confidential documents leaking | Serious | Local only by default, two switches before anything reaches the cloud, automatic deletion and an audit log. |
+| Confidential documents leaking | Serious | All models run locally. The only external path (Bhashini) is off by default and needs both an admin switch and a per-document switch. Automatic deletion and an audit log. |
 
 ---
 
