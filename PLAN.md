@@ -64,7 +64,7 @@
 | F2 | Translate Hindi, including code-mixed Hindi and English, into English. |
 | F3 | Outputs: **editable Word (.docx)**, **side-by-side web view**, **PDF with the original layout**, and plain text. |
 | F4 | Show progress page by page. A **quick draft** appears first and the **final version** follows. Keep a history, and show a Windows notification when a job is done. |
-| F5 | Let users review and correct individual sentences. Approved corrections are reused automatically next time (translation memory). |
+| F5 | Let users correct individual sentences. There is **no approve step**: a saved correction is remembered and reused automatically next time (translation memory). |
 | F6 | A glossary **shared by the team** across laptops, for example ज्ञापांक → "Memo No." and कार्यादेश → "Work Order". |
 | F7 | **A modern, easy interface** with light and dark themes. A **translation page** that shows a stage tracker, time remaining, a live preview, and a **tech-news panel** while the user waits. |
 
@@ -347,7 +347,7 @@ flowchart TD
   - the document subject line
   - the previous paragraph's English, for continuity
   - the glossary terms found in this paragraph
-  - up to 2 similar approved pairs from the translation memory
+  - up to 2 similar corrected pairs from the translation memory
   - the protected Hindi text
 - **Settings:** low temperature (about 0.2, tuned in the bake-off) for consistent output, and a 4–8K context window to keep memory low.
 - **Variant tested in the bake-off:** giving Gemma 4 the IndicTrans2 draft as a hint ("Gemma with draft"). Gemma stays the primary translator, and the draft helps it avoid missing anything.
@@ -454,7 +454,7 @@ merge or explain. Use GLOSSARY terms exactly. Keep every ⟦…⟧ placeholder u
 Formal Indian-English official style (e.g. "Memo No.", "Copy forwarded to", "By order").
 Return JSON: {"1": "...", "2": "...", ...} with one entry per numbered sentence.
 User: SUBJECT: <doc subject> | PREVIOUS ENGLISH: <previous paragraph>
-      GLOSSARY: <matched terms> | EXAMPLES: <2 similar approved pairs from TM>
+      GLOSSARY: <matched terms> | EXAMPLES: <2 similar corrected pairs from TM>
       HINDI:
       [1] <sentence 1>
       [2] <sentence 2> ...
@@ -472,7 +472,7 @@ User: SUBJECT: <doc subject> | PREVIOUS ENGLISH: <previous paragraph>
   - **light and dark themes**, following the Windows setting
 - **Built with free, widely used tools:** Tailwind CSS, shadcn/ui components (accessible, built on Radix) and lucide icons, all MIT or ISC licensed.
 - **Fonts bundled with the app:** **Inter** for English and **Noto Sans Devanagari** for Hindi (SIL Open Font License). No Google Fonts or other CDN, so it looks the same offline.
-- **Designed for laptop screens** from 1366×768 upward. The Review page has keyboard shortcuts: ↑/↓ to move between sentences, Enter to approve, E to edit.
+- **Designed for laptop screens** from 1366×768 upward. The Review page has keyboard shortcuts: ↑/↓ to move between sentences, E or Enter to correct one.
 - **Accessible:** contrast meets WCAG AA, and colour is never the only signal. Confidence is shown by colour, icon and label together: ✓ Good, ! Check, ✕ Needs human.
 - **Light on an 8 GB laptop:**
   - no video backgrounds or heavy animation libraries
@@ -590,7 +590,7 @@ news:
 | **Upload** | Drag and drop one or more PDFs, and choose outputs and a glossary. **Model:** *Auto (recommended)*, *Fast*, *Balanced* or *Best quality* (§4.4). It defaults to the laptop setting. Options that don't fit are greyed out, with the reason. Every choice except Fast shows the IndicTrans2 quick draft first. A **"Careful re-read of scanned pages"** checkbox makes Gemma 4 re-read all flagged pages, which is slow. If an admin has enabled Bhashini, a checkbox **"Allow Bhashini fallback for this document"** appears, off by default. |
 | **Translation page** | Stage tracker, time remaining, live preview, "Open quick draft now" and the news panel (§9.2, §9.3). |
 | **Jobs** | Status with **two milestones: "Quick draft ready" and "Final ready"**. A progress bar for each page, counts of segments needing review, download and delete buttons, and a Windows notification when each milestone is reached. On 8 GB laptops, a hint during the Gemma stage: "Close heavy apps for faster results". |
-| **Review** | The original page on the left and the English on the right, colour-coded by confidence. You can **start reviewing the quick draft straight away**, and sentences update as Gemma 4 finishes them. Click a sentence to edit or approve it, or to **re-translate it with another engine**. A **"Re-read this page carefully"** button sends one page to Gemma 4. Includes "Copy all English". |
+| **Review** | The original page on the left and the English on the right, colour-coded by confidence. You can **start reviewing the quick draft straight away**, and sentences update as Gemma 4 finishes them. Only sentences that are wrong need touching: click **Edit**, fix it and save. The correction is remembered for future documents, with no separate approve step. A sentence can also be **re-translated with another engine**. A **"Re-read this page carefully"** button sends one page to Gemma 4. Includes "Copy all English". |
 | **Glossary and memory** | Add, edit, and import or export the glossary as CSV. **Team sync:** point the app to a shared network folder, or export and import a sync file, so every laptop has the team's latest glossary and translation memory. |
 | **Settings** | Theme (light, dark or follow Windows), **news panel on/off and its sources** (admin), the **default model** for this laptop, the active profile (8 GB, 12 GB or workstation), current memory use, engine status (llama-server OK or not), fallback rate, retention period and Bhashini on/off. |
 | **Settings, Models** | Installed models, with size, licence and checksum status. **Download from Hugging Face** or **import a model pack**. Remove unused models, and re-verify files. Only catalog models are listed. |

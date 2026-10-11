@@ -104,7 +104,7 @@ class Segment(Base):
     issues: Mapped[list[str]] = mapped_column(JSON, default=list)
 
     edited: Mapped[str | None] = mapped_column(Text, nullable=True)
-    approved: Mapped[bool] = mapped_column(Boolean, default=False)
+    approved: Mapped[bool] = mapped_column(Boolean, default=False)  # a person corrected this sentence
 
     job: Mapped[Job] = relationship(back_populates="segments")
 
@@ -124,7 +124,7 @@ class GlossaryTerm(Base):
 
 
 class TMEntry(Base):
-    """Translation memory: approved sentence pairs, reused on exact match."""
+    """Translation memory: sentences people corrected, reused on exact match."""
 
     __tablename__ = "translation_memory"
 

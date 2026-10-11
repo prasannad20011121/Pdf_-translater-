@@ -104,19 +104,24 @@ def test_garbled_text_layer_is_replaced_by_ocr(client, app_env, pdfs):
     assert any("निविदा" in s["source"] for s in segs)
 
 
-def test_edit_approve_feeds_translation_memory(client, app_env, pdfs):
+def test_correction_feeds_translation_memory(client, app_env, pdfs):
     job = upload(client, pdfs["clean"])
     run_worker(app_env, job["id"])
     segs = client.get(f"/api/jobs/{job['id']}/segments").json()
     target = next(s for s in segs if s["source"].startswith("आदेश से"))
 
-    r = client.patch(f"/api/segments/{target['id']}", json={"text": "By order, Managing Director", "approved": True})
-    assert r.json()["text"] == "By order, Managing Director" and r.json()["approved"]
+    before = client.get(f"/api/jobs/{job['id']}").json()["counts"]
+    r = client.patch(f"/api/segments/{target['id']}", json={"text": "By order, Managing Director"})
+    assert r.json()["text"] == "By order, Managing Director" and r.json()["edited"]
+    after = client.get(f"/api/jobs/{job['id']}").json()["counts"]
+    assert sum(after.values()) == sum(before.values())
+    assert after["green"] >= before["green"]
+    assert client.patch(f"/api/segments/{target['id']}", json={"text": "   "}).status_code == 400
 
     docx = client.get(f"/api/jobs/{job['id']}/download/docx").content
     assert "By order, Managing Director" in "\n".join(p.text for p in Document(io.BytesIO(docx)).paragraphs)
 
-    # A second document reuses the approved sentence from translation memory.
+    # A second document reuses the corrected sentence from translation memory.
     job2 = upload(client, pdfs["clean"])
     run_worker(app_env, job2["id"])
     segs2 = client.get(f"/api/jobs/{job2['id']}/segments").json()

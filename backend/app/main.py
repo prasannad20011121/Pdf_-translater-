@@ -31,8 +31,8 @@ from .pipeline.validate import MESSAGES
 from .worker import JobRunner, cleanup_old_jobs
 
 TIPS = [
-    "Press ↑ and ↓ to move between sentences on the review screen, E to edit, Enter to approve.",
-    "Approved sentences are remembered and reused automatically in later documents.",
+    "Press ↑ and ↓ to move between sentences on the review screen, and E or Enter to correct one.",
+    "Sentences you correct are remembered and reused automatically in later documents.",
     "Amber and red sentences are the only ones you need to check.",
     "Choose Fast for routine circulars and Best quality for tenders and contracts.",
     "You can close this page: a notification appears when the translation is ready.",
@@ -117,7 +117,6 @@ def segment_dict(s: Segment) -> dict[str, Any]:
         "draft": s.draft,
         "final": s.final,
         "edited": s.edited is not None,
-        "approved": s.approved,
         "needs_translation": s.needs_translation,
     }
 
@@ -351,35 +350,39 @@ async def job_events(job_id: str, request: Request) -> StreamingResponse:
 # ---- review edits ------------------------------------------------------------------------
 
 class SegmentUpdate(BaseModel):
-    text: str | None = Field(default=None, max_length=5000)
-    approved: bool | None = None
+    text: str = Field(min_length=1, max_length=5000)
 
 
 @app.patch("/api/segments/{segment_id}")
 def update_segment(segment_id: int, upd: SegmentUpdate) -> dict[str, Any]:
+    """Save a person's correction. There is no separate approve step: a correction is
+    remembered (translation memory) and reused for identical sentences, here and in
+    later documents."""
+    text = upd.text.strip()
+    if not text:
+        raise HTTPException(400, "The translation can't be empty")
     with session_scope() as db:
         seg = db.get(Segment, segment_id)
         if seg is None:
             raise HTTPException(404, "Sentence not found")
-        if upd.text is not None:
-            seg.edited = upd.text.strip()
-            seg.approved = False
-        if upd.approved is not None:
-            seg.approved = upd.approved
-        if seg.approved and seg.display_text:
-            # Remember it, and apply it to identical sentences in this document.
-            entry = db.scalars(select(TMEntry).where(TMEntry.source == seg.source)).first()
-            if entry:
-                entry.target = seg.display_text
-            else:
-                db.add(TMEntry(source=seg.source, target=seg.display_text))
-            for twin in db.scalars(select(Segment).where(
-                Segment.job_id == seg.job_id, Segment.source == seg.source, Segment.id != seg.id,
-                Segment.edited.is_(None),
-            )):
-                twin.edited, twin.approved = seg.display_text, True
-        seg.job.outputs_stale = True
+        seg.edited, seg.approved = text, True
+        entry = db.scalars(select(TMEntry).where(TMEntry.source == seg.source)).first()
+        if entry:
+            entry.target = text
+        else:
+            db.add(TMEntry(source=seg.source, target=text))
+        for twin in db.scalars(select(Segment).where(
+            Segment.job_id == seg.job_id, Segment.source == seg.source, Segment.id != seg.id,
+            Segment.edited.is_(None),
+        )):
+            twin.edited, twin.approved = text, True
         db.flush()
+        # A corrected sentence no longer needs checking: keep the document summary in step.
+        counts = {"green": 0, "amber": 0, "red": 0}
+        for s in db.scalars(select(Segment).where(Segment.job_id == seg.job_id)):
+            counts["green" if s.edited is not None else (s.confidence or "green")] += 1
+        seg.job.counts = counts
+        seg.job.outputs_stale = True
         return segment_dict(seg)
 
 

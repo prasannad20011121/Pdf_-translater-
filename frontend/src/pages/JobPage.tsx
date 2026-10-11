@@ -16,6 +16,9 @@ import { cn, formatEta, notify } from "@/lib/utils";
 
 type View = "progress" | "review";
 
+/** A sentence still worth a look: the checks raised a doubt and nobody has corrected it yet. */
+const needsCheck = (s: Segment) => s.needs_translation && s.confidence !== "green" && !s.edited;
+
 function useJob(id: string) {
   const [job, setJob] = useState<Job | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -56,13 +59,17 @@ function useJob(id: string) {
 
 export default function JobPage() {
   const { id = "" } = useParams();
-  const { job, error } = useJob(id);
+  const { job, error, reload } = useJob(id);
   const [view, setView] = useState<View | null>(null);
   const [page, setPage] = useState(1);
   const [segments, setSegments] = useState<Segment[]>([]);
   const [selected, setSelected] = useState<number | null>(null);
   const [editing, setEditing] = useState<number | null>(null);
   const [onlyReview, setOnlyReview] = useState(false);
+  // Sentences corrected while the "needs review" filter is on stay visible (marked
+  // "Corrected by you") until the page or filter changes, instead of vanishing on save.
+  const [justCorrected, setJustCorrected] = useState<Set<number>>(new Set());
+  useEffect(() => setJustCorrected(new Set()), [page, onlyReview]);
   const notified = useRef({ draft: false, final: false });
 
   // Pick the starting view once the job is known.
@@ -104,22 +111,21 @@ export default function JobPage() {
   }, [loadSegments, job?.updated_at, job?.status]);
 
   const visible = useMemo(
-    () => (onlyReview ? segments.filter((s) => s.needs_translation && s.confidence !== "green" && !s.approved) : segments),
-    [segments, onlyReview],
+    () => (onlyReview ? segments.filter((s) => needsCheck(s) || justCorrected.has(s.id)) : segments),
+    [segments, onlyReview, justCorrected],
   );
+  const toCheckOnPage = segments.filter(needsCheck).length;
 
   const replace = (s: Segment) => setSegments((all) => all.map((x) => (x.id === s.id ? s : x)));
   const save = async (seg: Segment, text: string) => {
-    replace(await api.updateSegment(seg.id, { text, approved: true }));
+    replace(await api.correctSegment(seg.id, text));
+    setJustCorrected((prev) => new Set(prev).add(seg.id));
     setEditing(null);
-    void loadSegments();
-  };
-  const approve = async (seg: Segment) => {
-    replace(await api.updateSegment(seg.id, { approved: true }));
-    void loadSegments();
+    void loadSegments(); // identical sentences on the page pick up the correction too
+    void reload(); // the document summary counts change
   };
 
-  // Keyboard: ↑/↓ move, E edit, Enter approve.
+  // Keyboard: ↑/↓ move, E or Enter to correct the selected sentence.
   useEffect(() => {
     if (view !== "review") return;
     const onKey = (e: KeyboardEvent) => {
@@ -130,12 +136,9 @@ export default function JobPage() {
         e.preventDefault();
         const next = e.key === "ArrowDown" ? Math.min(visible.length - 1, idx + 1) : Math.max(0, idx - 1);
         if (visible[next]) setSelected(visible[next].id);
-      } else if ((e.key === "e" || e.key === "E") && selected !== null) {
+      } else if ((e.key === "e" || e.key === "E" || e.key === "Enter") && selected !== null) {
         e.preventDefault();
         setEditing(selected);
-      } else if (e.key === "Enter" && selected !== null) {
-        const seg = visible.find((s) => s.id === selected);
-        if (seg && !seg.approved) void approve(seg);
       }
     };
     window.addEventListener("keydown", onKey);
@@ -163,7 +166,6 @@ export default function JobPage() {
   const pageCount = Math.max(job.page_count, 1);
   const pageInfo = job.pages?.find((p) => p.page_no === page);
   const canDownload = job.draft_ready || job.status === "done";
-  const needsReview = (job.counts.amber ?? 0) + (job.counts.red ?? 0);
 
   const pager = (
     <div className="flex items-center gap-1">
@@ -295,7 +297,6 @@ export default function JobPage() {
                         onEdit={() => {}}
                         onCancel={() => {}}
                         onSave={() => {}}
-                        onApprove={() => {}}
                       />
                     ))}
                   </div>
@@ -320,7 +321,9 @@ export default function JobPage() {
           <div className="flex flex-wrap items-center justify-between gap-3">
             {pager}
             <div className="flex items-center gap-2">
-              {needsReview > 0 && <span className="text-sm text-muted-foreground">{needsReview} to check</span>}
+              <span className="text-sm text-muted-foreground">
+                {toCheckOnPage > 0 ? `${toCheckOnPage} to check on this page` : "Nothing to check on this page"}
+              </span>
               <Button variant={onlyReview ? "primary" : "outline"} size="sm" onClick={() => setOnlyReview(!onlyReview)}>
                 <Filter className="h-3.5 w-3.5" aria-hidden /> Needs review only
               </Button>
@@ -352,11 +355,10 @@ export default function JobPage() {
                   onEdit={() => (setSelected(s.id), setEditing(s.id))}
                   onCancel={() => setEditing(null)}
                   onSave={(text) => void save(s, text)}
-                  onApprove={() => void approve(s)}
                 />
               ))}
               <p className={cn("pt-2 text-center text-xs text-muted-foreground", !visible.length && "hidden")}>
-                ↑ ↓ to move · E to edit · Enter to approve
+                ↑ ↓ to move · E or Enter to correct a sentence
               </p>
             </div>
           </div>

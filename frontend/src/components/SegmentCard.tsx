@@ -1,4 +1,4 @@
-import { Check, Pencil } from "lucide-react";
+import { Pencil, UserCheck } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { Job, Segment } from "@/lib/api";
 import { cn } from "@/lib/utils";
@@ -27,10 +27,9 @@ interface Props {
   onEdit: () => void;
   onCancel: () => void;
   onSave: (text: string) => void;
-  onApprove: () => void;
 }
 
-export function SegmentCard({ job, segment, selected, editing, compact, onSelect, onEdit, onCancel, onSave, onApprove }: Props) {
+export function SegmentCard({ job, segment, selected, editing, compact, onSelect, onEdit, onCancel, onSave }: Props) {
   const [text, setText] = useState(segment.text ?? "");
   const area = useRef<HTMLTextAreaElement>(null);
   const card = useRef<HTMLDivElement>(null);
@@ -77,13 +76,15 @@ export function SegmentCard({ job, segment, selected, editing, compact, onSelect
             aria-label="Edit the English translation"
           />
           <div className="flex items-center gap-2">
-            <Button size="sm" onClick={() => onSave(text)}>
-              Save and approve
+            <Button size="sm" onClick={() => onSave(text)} disabled={!text.trim()}>
+              Save
             </Button>
             <Button size="sm" variant="ghost" onClick={onCancel}>
               Cancel
             </Button>
-            <span className="ml-auto text-xs text-muted-foreground">Ctrl+Enter to save · Esc to cancel</span>
+            <span className="ml-auto text-xs text-muted-foreground">
+              Remembered for future documents · Ctrl+Enter to save · Esc to cancel
+            </span>
           </div>
         </div>
       ) : pending ? (
@@ -96,25 +97,26 @@ export function SegmentCard({ job, segment, selected, editing, compact, onSelect
 
       {!compact && !editing && !pending && (
         <div className="mt-2.5 flex flex-wrap items-center gap-2">
-          {segment.approved ? (
+          {segment.edited ? (
             <span className="inline-flex items-center gap-1 rounded-full bg-good-soft px-2.5 py-0.5 text-xs font-medium text-good">
-              <Check className="h-3.5 w-3.5" aria-hidden /> Approved
+              <UserCheck className="h-3.5 w-3.5" aria-hidden /> Corrected by you
             </span>
           ) : (
-            <ConfidenceBadge level={segment.confidence} />
+            <>
+              <ConfidenceBadge level={segment.confidence} />
+              <span className="text-xs text-muted-foreground">{engineLabel(job, segment.engine)}</span>
+            </>
           )}
-          <span className="text-xs text-muted-foreground">{engineLabel(job, segment.engine)}</span>
-          <div className="ml-auto flex gap-1">
-            <Button size="sm" variant="ghost" onClick={(e) => (e.stopPropagation(), onEdit())} aria-label="Edit">
-              <Pencil className="h-3.5 w-3.5" aria-hidden /> Edit
-            </Button>
-            {!segment.approved && segment.needs_translation && (
-              <Button size="sm" variant="outline" onClick={(e) => (e.stopPropagation(), onApprove())}>
-                <Check className="h-3.5 w-3.5" aria-hidden /> Approve
-              </Button>
-            )}
-          </div>
-          {!segment.approved && segment.issues.length > 0 && (
+          <Button
+            size="sm"
+            variant="ghost"
+            className="ml-auto"
+            onClick={(e) => (e.stopPropagation(), onEdit())}
+            aria-label="Correct this sentence"
+          >
+            <Pencil className="h-3.5 w-3.5" aria-hidden /> Edit
+          </Button>
+          {!segment.edited && segment.issues.length > 0 && (
             <ul className="w-full space-y-0.5 text-xs text-muted-foreground">
               {segment.issues.map((i) => (
                 <li key={i.code}>• {i.message}</li>

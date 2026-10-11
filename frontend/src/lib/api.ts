@@ -72,7 +72,6 @@ export interface Segment {
   draft: string | null;
   final: string | null;
   edited: boolean;
-  approved: boolean;
   needs_translation: boolean;
 }
 
@@ -138,8 +137,9 @@ export const api = {
   },
   segments: (id: string, page?: number) =>
     request<Segment[]>(`/api/jobs/${id}/segments${page ? `?page=${page}` : ""}`),
-  updateSegment: (id: number, body: { text?: string; approved?: boolean }) =>
-    request<Segment>(`/api/segments/${id}`, { method: "PATCH", ...json(body) }),
+  /** Save a correction. It is remembered and reused for identical sentences. */
+  correctSegment: (id: number, text: string) =>
+    request<Segment>(`/api/segments/${id}`, { method: "PATCH", ...json({ text }) }),
   glossary: () => request<Term[]>("/api/glossary"),
   addTerm: (t: Omit<Term, "id">) => request<Term>("/api/glossary", { method: "POST", ...json(t) }),
   deleteTerm: (id: number) => request<{ status: string }>(`/api/glossary/${id}`, { method: "DELETE" }),
