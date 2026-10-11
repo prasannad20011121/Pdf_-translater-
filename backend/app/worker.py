@@ -44,6 +44,13 @@ CIRCUIT_BREAKER_FAILURES = 3
 # Starting guesses (seconds per sentence) until this laptop has measured its own speed.
 DEFAULT_RATES = {"draft": 0.8, "final": 6.0}
 SKIP_ENGINES = ("memory", "copy")
+STAGE_MESSAGES = {
+    "extract": "Reading pages",
+    "draft": "Starting the quick draft",
+    "final": "Starting the final translation",
+    "check": "Checking every sentence",
+    "render": "Preparing the Word file",
+}
 
 
 def stored_checks(data: dict | None) -> CheckResult:
@@ -103,7 +110,7 @@ class JobRunner:
         try:
             stages = STAGES[STAGES.index(start_stage):]
             for stage in stages:
-                self._update(job_id, stage=stage, stage_progress=0.0)
+                self._update(job_id, stage=stage, stage_progress=0.0, message=STAGE_MESSAGES.get(stage, ""))
                 if stage == "extract":
                     self.stage_extract(job_id)
                 elif stage == "draft":
@@ -226,6 +233,9 @@ class JobRunner:
                     batch = self._pending(db, job_id, "draft")[:DRAFT_BATCH]
                     if not batch:
                         break
+                    job = db.get(Job, job_id)
+                    job.message = f"Quick draft: {done} of {total} sentences"
+                    db.commit()  # show progress before the (slow) batch starts
                     outputs = engine.translate([s.source for s in batch], DocContext(glossary=glossary))
                     for seg, out in zip(batch, outputs):
                         result = check(seg.source, out, glossary=glossary)

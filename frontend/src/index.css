@@ -1,0 +1,63 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Design tokens. Colours meet WCAG AA contrast in both themes. */
+@layer base {
+  :root {
+    --background: 220 20% 98%;
+    --foreground: 222 47% 11%;
+    --card: 0 0% 100%;
+    --card-foreground: 222 47% 11%;
+    --muted: 220 14% 95%;
+    --muted-foreground: 220 9% 38%;
+    --border: 220 13% 89%;
+    --ring: 243 75% 59%;
+    --primary: 243 75% 55%;
+    --primary-foreground: 0 0% 100%;
+    --accent: 243 100% 97%;
+    --accent-foreground: 243 60% 40%;
+    --good: 145 63% 30%;
+    --good-soft: 145 70% 94%;
+    --warn: 28 90% 35%;
+    --warn-soft: 45 100% 92%;
+    --bad: 0 72% 44%;
+    --bad-soft: 0 86% 96%;
+  }
+  .dark {
+    --background: 224 30% 8%;
+    --foreground: 220 20% 95%;
+    --card: 224 28% 11%;
+    --card-foreground: 220 20% 95%;
+    --muted: 224 22% 16%;
+    --muted-foreground: 220 12% 70%;
+    --border: 224 20% 21%;
+    --ring: 243 90% 72%;
+    --primary: 243 85% 70%;
+    --primary-foreground: 224 40% 10%;
+    --accent: 243 40% 20%;
+    --accent-foreground: 243 90% 86%;
+    --good: 145 60% 58%;
+    --good-soft: 145 40% 15%;
+    --warn: 38 95% 62%;
+    --warn-soft: 38 50% 15%;
+    --bad: 0 85% 70%;
+    --bad-soft: 0 45% 17%;
+  }
+  html {
+    -webkit-font-smoothing: antialiased;
+  }
+  body {
+    @apply bg-background text-foreground font-sans;
+  }
+  :focus-visible {
+    @apply outline-none ring-2 ring-ring ring-offset-2 ring-offset-background;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}

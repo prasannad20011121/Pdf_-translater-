@@ -32,23 +32,35 @@ def _deva_font_file(tmp: Path) -> Path:
     return path
 
 
+def _write_line(page: pymupdf.Page, x: float, y: float, line: str, deva: pymupdf.Font) -> None:
+    """Write Latin-letter words with Helvetica and everything else with the Devanagari font."""
+    helv = pymupdf.Font("helv")
+    for i, word in enumerate(line.split(" ")):
+        text = word if i == 0 else " " + word
+        latin = any(c.isascii() and c.isalpha() for c in word)
+        font, name = (helv, "helv") if latin else (deva, "deva")
+        page.insert_text((x, y), text, fontname=name, fontsize=11)
+        x += font.text_length(text, fontsize=11)
+
+
 def make_clean_pdf(path: Path, paragraphs: list[str]) -> Path:
     """Text that extracts correctly (logical order). Glyphs aren't shaped, which is fine for tests."""
-    font = _deva_font_file(path.parent)
+    font_file = _deva_font_file(path.parent)
+    deva = pymupdf.Font(fontfile=str(font_file))
     doc = pymupdf.open()
     page = doc.new_page()
-    page.insert_font(fontname="deva", fontfile=str(font))
+    page.insert_font(fontname="deva", fontfile=str(font_file))
     y = 72
     for para in paragraphs:
         # One paragraph per text block; wrap long ones manually.
         words, line = para.split(), ""
         for w in words:
             if len(line) + len(w) > 70:
-                page.insert_text((60, y), line, fontname="deva", fontsize=11)
+                _write_line(page, 60, y, line, deva)
                 y += 16
                 line = ""
             line = f"{line} {w}".strip()
-        page.insert_text((60, y), line, fontname="deva", fontsize=11)
+        _write_line(page, 60, y, line, deva)
         y += 34
     doc.save(str(path))
     return path
