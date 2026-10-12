@@ -100,14 +100,43 @@ def restore(output: str, items: list[Item]) -> Restored:
     return Restored(text, missing, duplicated, unknown)
 
 
-_NUMBER = re.compile(r"\d+(?:[./,:\-]\d+)*")
+_NUMBER = re.compile("\\d+(?:[./,:\\-\u2013\u2014]\\d+)*")
+_PART_SEP = re.compile("([./:\\-\u2013\u2014])")
+# Thousands grouping, Western (11,800 / 1,000,000) or Indian (5,00,000 / 1,23,45,678).
+_GROUPED = re.compile(r"\d{1,3}(?:,\d{3})+|\d{1,2}(?:,\d{2})*,\d{3}")
+_RANGE_SEPS = ("-", "\u2013", "\u2014", "/")
+
+
+def _number_parts(match: str) -> list[str]:
+    """Split one matched number into the numbers a reader sees in it.
+
+    "12.03.2026" -> 12, 3, 2026; "5,00,000" -> 500000; "5,6" -> 5, 6;
+    "2025-26" -> 2025, 2026 (a financial year, written the same as "2025-2026").
+    """
+    pieces = _PART_SEP.split(match)
+    chunks, seps = pieces[0::2], [""] + pieces[1::2]
+    out: list[str] = []
+    prev = ""
+    for chunk, sep in zip(chunks, seps):
+        parts = [chunk.replace(",", "")] if _GROUPED.fullmatch(chunk) else [p for p in chunk.split(",") if p]
+        for j, part in enumerate(parts):
+            if (j == 0 and sep in _RANGE_SEPS and len(prev) == 4 and prev[:2] in ("19", "20")
+                    and len(part) == 2 and int(part) == (int(prev) + 1) % 100):
+                part = str(int(prev) + 1)
+            out.append(part.lstrip("0") or "0")
+            prev = part
+    return out
 
 
 def numbers_in(text: str) -> Counter[str]:
-    """Numbers as digit strings, so "5,00,000" and "500000" compare equal."""
+    """The numbers in a text, compared by value rather than by format.
+
+    Devanagari digits count as ASCII, grouping commas are ignored ("5,00,000" equals
+    "500000"), and dates, ranges and lists count as separate numbers, so "12.03.2026"
+    equals "12/03/2026" and "5,6 एवं 7" equals "5, 6 and 7".
+    """
     found: Counter[str] = Counter()
     for m in _NUMBER.finditer(ascii_digits(text)):
-        digits = re.sub(r"\D", "", m.group())
-        if digits:
-            found[digits.lstrip("0") or "0"] += 1
+        for part in _number_parts(m.group()):
+            found[part] += 1
     return found
