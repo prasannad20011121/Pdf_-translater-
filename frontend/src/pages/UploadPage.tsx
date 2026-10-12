@@ -1,4 +1,4 @@
-import { ArrowRight, FileText, Gauge, Lock, Sparkles, Trophy, UploadCloud, Wand2, X } from "lucide-react";
+import { AlertCircle, ArrowRight, CheckCircle2, FileText, Gauge, Lock, Sparkles, Trophy, UploadCloud, Wand2, X } from "lucide-react";
 import { useEffect, useRef, useState, type DragEvent } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { ConfidenceSummary } from "@/components/ConfidenceBadge";
@@ -7,28 +7,35 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Spinner } from "@/components/ui/spinner";
 import { api, type ChoiceId, type Job } from "@/lib/api";
+import { useJobs } from "@/lib/jobs-context";
 import { useSettings } from "@/lib/settings-context";
-import { askNotificationPermission, cn, formatDate } from "@/lib/utils";
+import { formatDate } from "@/lib/time";
+import { uploadAll, type FileUploadState } from "@/lib/upload";
+import { askNotificationPermission, cn } from "@/lib/utils";
 
 const CHOICE_ICONS: Record<ChoiceId, typeof Wand2> = { auto: Wand2, fast: Gauge, balanced: Sparkles, best: Trophy };
 
 export default function UploadPage() {
   const { settings } = useSettings();
+  const { jobs, refresh: refreshJobs } = useJobs();
   const navigate = useNavigate();
   const [files, setFiles] = useState<File[]>([]);
+  const [fileState, setFileState] = useState<Map<File, FileUploadState>>(new Map());
   const [choice, setChoice] = useState<ChoiceId>("auto");
   const [dragging, setDragging] = useState(false);
   const [busy, setBusy] = useState(false);
+  const busyRef = useRef(false); // blocks a second click before the button re-renders as disabled
   const [error, setError] = useState<string | null>(null);
-  const [recent, setRecent] = useState<Job[]>([]);
+  const [queued, setQueued] = useState<Job[]>([]);
   const input = useRef<HTMLInputElement>(null);
+  const recent = (jobs ?? []).slice(0, 5);
 
   useEffect(() => {
     if (settings) setChoice(settings.default_choice);
   }, [settings]);
   useEffect(() => {
-    api.jobs().then((j) => setRecent(j.slice(0, 5))).catch(() => {});
-  }, []);
+    void refreshJobs();
+  }, [refreshJobs]);
 
   const addFiles = (list: FileList | null) => {
     if (!list) return;
@@ -41,23 +48,46 @@ export default function UploadPage() {
   const onDrop = (e: DragEvent) => {
     e.preventDefault();
     setDragging(false);
-    addFiles(e.dataTransfer.files);
+    if (!busyRef.current) addFiles(e.dataTransfer.files);
   };
 
   const selected = settings?.choices.find((c) => c.id === choice);
 
   const start = async () => {
+    if (busyRef.current || !files.length) return;
+    busyRef.current = true;
     setBusy(true);
     setError(null);
-    askNotificationPermission();
-    try {
-      const jobs: Job[] = [];
-      for (const f of files) jobs.push(await api.upload(f, choice));
-      navigate(jobs.length === 1 ? `/jobs/${jobs[0].id}` : "/jobs");
-    } catch (e) {
-      setError((e as Error).message);
-      setBusy(false);
+    setQueued([]);
+    void askNotificationPermission(); // asked while the click still counts as the person's own action
+    const result = await uploadAll(files, (f) => api.upload(f, choice), (f, state) => {
+      setFileState((prev) => new Map(prev).set(f, state));
+      // Off the list as soon as it is queued, so trying again never uploads it twice.
+      if (state.state === "queued") setFiles((prev) => prev.filter((x) => x !== f));
+    });
+    busyRef.current = false;
+    setBusy(false);
+    void refreshJobs();
+    if (result.queued.length && !result.failed.length) {
+      navigate(result.queued.length === 1 ? `/jobs/${result.queued[0].job.id}` : "/jobs");
+      return;
     }
+    setQueued(result.queued.map((q) => q.job));
+    const n = result.failed.length;
+    setError(
+      n === 1
+        ? "1 file could not be uploaded. The reason is shown next to it."
+        : `${n} files could not be uploaded. The reasons are shown next to them.`,
+    );
+  };
+
+  const removeFile = (f: File) => {
+    setFiles((prev) => prev.filter((x) => x !== f));
+    setFileState((prev) => {
+      const next = new Map(prev);
+      next.delete(f);
+      return next;
+    });
   };
 
   return (
@@ -77,8 +107,14 @@ export default function UploadPage() {
           <div
             role="button"
             tabIndex={0}
-            onClick={() => input.current?.click()}
-            onKeyDown={(e) => (e.key === "Enter" || e.key === " ") && input.current?.click()}
+            aria-disabled={busy}
+            onClick={() => !busy && input.current?.click()}
+            onKeyDown={(e) => {
+              if ((e.key === "Enter" || e.key === " ") && !busy) {
+                e.preventDefault();
+                input.current?.click();
+              }
+            }}
             onDragOver={(e) => {
               e.preventDefault();
               setDragging(true);
@@ -114,21 +150,68 @@ export default function UploadPage() {
 
           {files.length > 0 && (
             <ul className="space-y-2">
-              {files.map((f) => (
-                <li key={f.name + f.size} className="flex items-center gap-3 rounded-lg border border-border px-3 py-2">
-                  <FileText className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
-                  <span className="truncate text-sm font-medium">{f.name}</span>
-                  <span className="ml-auto shrink-0 text-xs text-muted-foreground">{(f.size / 1024 / 1024).toFixed(1)} MB</span>
-                  <button
-                    className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
-                    onClick={() => setFiles(files.filter((x) => x !== f))}
-                    aria-label={`Remove ${f.name}`}
+              {files.map((f) => {
+                const st = fileState.get(f);
+                const failed = st?.state === "failed";
+                return (
+                  <li
+                    key={f.name + f.size}
+                    className={cn(
+                      "rounded-lg border px-3 py-2",
+                      failed ? "border-bad/40 bg-bad-soft/40" : "border-border",
+                    )}
                   >
-                    <X className="h-4 w-4" />
-                  </button>
-                </li>
-              ))}
+                    <div className="flex items-center gap-3">
+                      {st?.state === "uploading" ? (
+                        <Spinner className="shrink-0 text-primary" />
+                      ) : failed ? (
+                        <AlertCircle className="h-4 w-4 shrink-0 text-bad" aria-hidden />
+                      ) : st?.state === "queued" ? (
+                        <CheckCircle2 className="h-4 w-4 shrink-0 text-good" aria-hidden />
+                      ) : (
+                        <FileText className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                      )}
+                      <span className="truncate text-sm font-medium">{f.name}</span>
+                      <span className="ml-auto shrink-0 text-xs text-muted-foreground">
+                        {busy && st?.state === "uploading"
+                          ? "Uploading…"
+                          : busy && st?.state === "waiting"
+                            ? "Waiting"
+                            : `${(f.size / 1024 / 1024).toFixed(1)} MB`}
+                      </span>
+                      <button
+                        className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-40"
+                        onClick={() => removeFile(f)}
+                        disabled={busy}
+                        aria-label={`Remove ${f.name}`}
+                      >
+                        <X className="h-4 w-4" />
+                      </button>
+                    </div>
+                    {failed && (
+                      <p className="mt-1 pl-7 text-sm text-bad">
+                        Not uploaded: {st.message}
+                      </p>
+                    )}
+                  </li>
+                );
+              })}
             </ul>
+          )}
+
+          {queued.length > 0 && (
+            <div className="rounded-lg bg-good-soft px-3 py-2 text-sm text-good" role="status">
+              {queued.length === 1 ? "1 file is" : `${queued.length} files are`} being translated:{" "}
+              {queued.map((j, i) => (
+                <span key={j.id}>
+                  {i > 0 && ", "}
+                  <Link to={`/jobs/${j.id}`} className="font-medium underline-offset-2 hover:underline">
+                    {j.filename}
+                  </Link>
+                </span>
+              ))}
+              .
+            </div>
           )}
 
           <fieldset className="space-y-3">
@@ -169,13 +252,13 @@ export default function UploadPage() {
             </div>
           </fieldset>
 
-          {error && <p className="rounded-lg bg-bad-soft px-3 py-2 text-sm text-bad">{error}</p>}
+          {error && <p className="rounded-lg bg-bad-soft px-3 py-2 text-sm text-bad" role="alert">{error}</p>}
 
           <div className="flex flex-col-reverse items-stretch gap-3 sm:flex-row sm:items-center sm:justify-between">
             <p className="text-xs text-muted-foreground">
               A quick draft appears within minutes; the final version follows. You can keep working meanwhile.
             </p>
-            <Button size="lg" onClick={start} disabled={!files.length || busy || !selected?.available}>
+            <Button size="lg" onClick={() => void start()} disabled={!files.length || busy || !selected?.available}>
               {busy ? <Spinner /> : <ArrowRight className="h-4 w-4" aria-hidden />}
               {busy ? "Uploading…" : `Translate ${files.length > 1 ? `${files.length} files` : ""}`.trim()}
             </Button>

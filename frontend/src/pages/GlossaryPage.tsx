@@ -1,10 +1,55 @@
-import { Download, Plus, Search, Trash2, Upload } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Download, Plus, Search, Trash2, Upload, X, XCircle } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { Button, buttonClasses } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { api, type Term } from "@/lib/api";
+import { Spinner } from "@/components/ui/spinner";
+import { api, type GlossaryImportResult, type Term } from "@/lib/api";
 
 const inputClass = "h-10 w-full rounded-lg border border-border bg-background px-3 text-sm placeholder:text-muted-foreground";
+
+interface ImportReport extends GlossaryImportResult {
+  file: string;
+  /** The whole file was refused (for example, not saved as UTF-8). */
+  failure?: string;
+}
+
+const SAVE_AS_HINT = 'In Excel, use File → Save As and choose "CSV UTF-8 (Comma delimited)", then import that file.';
+const MAX_ERRORS_SHOWN = 8;
+
+function ImportResult({ report, onClose }: { report: ImportReport; onClose: () => void }) {
+  const { failure, imported, skipped, errors } = report;
+  const tone = failure ? "bad" : skipped || errors.length ? "warn" : "good";
+  const Icon = tone === "bad" ? XCircle : tone === "warn" ? AlertTriangle : CheckCircle2;
+  const style = { bad: "bg-bad-soft text-bad", warn: "bg-warn-soft text-warn", good: "bg-good-soft text-good" }[tone];
+  const encodingProblem = !!failure || errors.some((e) => /utf|encod|devanagari|\?/i.test(e));
+  return (
+    <div className={`flex gap-3 rounded-xl px-4 py-3 text-sm ${style}`} role={failure ? "alert" : "status"}>
+      <Icon className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
+      <div className="min-w-0 flex-1 space-y-1.5">
+        <p className="font-medium">
+          {failure
+            ? `"${report.file}" was not imported.`
+            : `${report.file}: ${imported} term${imported === 1 ? "" : "s"} imported${skipped ? `, ${skipped} row${skipped === 1 ? "" : "s"} skipped` : ""}.`}
+        </p>
+        {failure && <p>{failure}</p>}
+        {errors.length > 0 && (
+          <ul className="list-disc space-y-0.5 pl-5">
+            {errors.slice(0, MAX_ERRORS_SHOWN).map((e, i) => (
+              <li key={i} className="break-words">
+                {e}
+              </li>
+            ))}
+            {errors.length > MAX_ERRORS_SHOWN && <li>…and {errors.length - MAX_ERRORS_SHOWN} more</li>}
+          </ul>
+        )}
+        {encodingProblem && <p className="text-foreground/80">{SAVE_AS_HINT}</p>}
+      </div>
+      <button className="h-fit rounded p-1 opacity-70 hover:opacity-100" onClick={onClose} aria-label="Dismiss">
+        <X className="h-4 w-4" />
+      </button>
+    </div>
+  );
+}
 
 export default function GlossaryPage() {
   const [terms, setTerms] = useState<Term[]>([]);
@@ -13,6 +58,8 @@ export default function GlossaryPage() {
   const [note, setNote] = useState("");
   const [query, setQuery] = useState("");
   const [message, setMessage] = useState<{ kind: "ok" | "error"; text: string } | null>(null);
+  const [importing, setImporting] = useState(false);
+  const [importReport, setImportReport] = useState<ImportReport | null>(null);
   const file = useRef<HTMLInputElement>(null);
 
   const load = () => api.glossary().then(setTerms).catch((e) => setMessage({ kind: "error", text: e.message }));
@@ -35,14 +82,30 @@ export default function GlossaryPage() {
   };
 
   const importCsv = async (f: File | undefined) => {
-    if (!f) return;
+    if (!f || importing) return;
+    setImporting(true);
+    setMessage(null);
+    setImportReport(null);
     try {
       const r = await api.importGlossary(f);
-      setMessage({ kind: "ok", text: `Imported ${r.imported} terms.` });
+      setImportReport({ file: f.name, ...r });
       void load();
     } catch (err) {
-      setMessage({ kind: "error", text: (err as Error).message });
+      setImportReport({ file: f.name, imported: 0, skipped: 0, errors: [], failure: (err as Error).message });
+    } finally {
+      setImporting(false);
     }
+  };
+
+  const remove = async (t: Term) => {
+    if (!window.confirm(`Delete the term "${t.hindi}" → "${t.english}"?`)) return;
+    try {
+      await api.deleteTerm(t.id);
+      setMessage({ kind: "ok", text: `Deleted "${t.hindi}".` });
+    } catch (err) {
+      setMessage({ kind: "error", text: `Could not delete "${t.hindi}": ${(err as Error).message}` });
+    }
+    void load();
   };
 
   const shown = useMemo(() => {
@@ -58,17 +121,31 @@ export default function GlossaryPage() {
           <p className="text-sm text-muted-foreground">
             Terms that must always be translated the same way, e.g. ज्ञापांक → Memo No.
           </p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            CSV import: columns hindi, english, note, saved as "CSV UTF-8" (Excel: File → Save As → CSV UTF-8).
+          </p>
         </div>
         <div className="flex gap-2">
-          <Button variant="outline" onClick={() => file.current?.click()}>
-            <Upload className="h-4 w-4" aria-hidden /> Import CSV
+          <Button variant="outline" onClick={() => file.current?.click()} disabled={importing} title="A CSV file with the columns hindi, english, note, saved as UTF-8">
+            {importing ? <Spinner /> : <Upload className="h-4 w-4" aria-hidden />} {importing ? "Importing…" : "Import CSV"}
           </Button>
           <a href="/api/glossary/export" className={buttonClasses("outline")}>
             <Download className="h-4 w-4" aria-hidden /> Export CSV
           </a>
-          <input ref={file} type="file" accept=".csv,text/csv" className="hidden" onChange={(e) => void importCsv(e.target.files?.[0])} />
+          <input
+            ref={file}
+            type="file"
+            accept=".csv,text/csv"
+            className="hidden"
+            onChange={(e) => {
+              void importCsv(e.target.files?.[0]);
+              e.target.value = ""; // choosing the same (corrected) file again must import it again
+            }}
+          />
         </div>
       </div>
+
+      {importReport && <ImportResult report={importReport} onClose={() => setImportReport(null)} />}
 
       <Card>
         <CardHeader>
@@ -122,7 +199,7 @@ export default function GlossaryPage() {
                   <td className="px-5 py-2.5">{t.english}</td>
                   <td className="hidden px-5 py-2.5 text-muted-foreground md:table-cell">{t.note}</td>
                   <td className="px-3 py-1.5">
-                    <Button variant="ghost" size="icon" aria-label={`Delete ${t.hindi}`} onClick={() => api.deleteTerm(t.id).then(load)}>
+                    <Button variant="ghost" size="icon" aria-label={`Delete ${t.hindi}`} onClick={() => void remove(t)}>
                       <Trash2 className="h-4 w-4" />
                     </Button>
                   </td>

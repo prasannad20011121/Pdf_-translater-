@@ -1,6 +1,8 @@
 import { FlaskConical } from "lucide-react";
-import { Route, Routes } from "react-router-dom";
+import { Route, Routes, useParams } from "react-router-dom";
 import { Layout } from "./components/Layout";
+import { Toasts } from "./components/Toasts";
+import { JobsProvider } from "./lib/jobs-context";
 import { SettingsProvider, useSettings } from "./lib/settings-context";
 import GlossaryPage from "./pages/GlossaryPage";
 import JobPage from "./pages/JobPage";
@@ -26,19 +28,28 @@ function DevBanner() {
   );
 }
 
+/** A fresh page (and state) for each document, e.g. when a notification opens another one. */
+function JobRoute() {
+  const { id = "" } = useParams();
+  return <JobPage key={id} />;
+}
+
 export default function App() {
   return (
     <SettingsProvider>
-      <Layout banner={<DevBanner />}>
-        <Routes>
-          <Route path="/" element={<UploadPage />} />
-          <Route path="/jobs" element={<JobsPage />} />
-          <Route path="/jobs/:id" element={<JobPage />} />
-          <Route path="/glossary" element={<GlossaryPage />} />
-          <Route path="/settings" element={<SettingsPage />} />
-          <Route path="*" element={<UploadPage />} />
-        </Routes>
-      </Layout>
+      <JobsProvider>
+        <Layout banner={<DevBanner />}>
+          <Routes>
+            <Route path="/" element={<UploadPage />} />
+            <Route path="/jobs" element={<JobsPage />} />
+            <Route path="/jobs/:id" element={<JobRoute />} />
+            <Route path="/glossary" element={<GlossaryPage />} />
+            <Route path="/settings" element={<SettingsPage />} />
+            <Route path="*" element={<UploadPage />} />
+          </Routes>
+        </Layout>
+        <Toasts />
+      </JobsProvider>
     </SettingsProvider>
   );
 }

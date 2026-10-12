@@ -104,17 +104,52 @@ export interface Tips {
   stats: { documents: number; sentences: number };
 }
 
+export interface GlossaryImportResult {
+  imported: number;
+  skipped: number;
+  errors: string[];
+}
+
+/** An API error. `status` is the HTTP status, or 0 when the service could not be reached. */
+export class ApiError extends Error {
+  readonly status: number;
+  constructor(status: number, message: string) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+  }
+}
+
+export const isNotFound = (e: unknown): boolean => e instanceof ApiError && e.status === 404;
+
+/** Turns a FastAPI error body into one readable sentence (422 bodies hold a list of problems). */
+export function errorMessage(body: unknown, status: number, statusText = ""): string {
+  const detail = (body as { detail?: unknown } | null)?.detail;
+  if (typeof detail === "string" && detail.trim()) return detail;
+  if (Array.isArray(detail)) {
+    const parts = detail
+      .map((d) => (d && typeof d === "object" && typeof (d as { msg?: unknown }).msg === "string" ? (d as { msg: string }).msg : ""))
+      .filter(Boolean);
+    if (parts.length) return parts.join("; ");
+  }
+  return statusText || `Request failed (${status})`;
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(path, init);
+  let res: Response;
+  try {
+    res = await fetch(path, init);
+  } catch {
+    throw new ApiError(0, "Can't reach the translator service. Check that it is still running.");
+  }
   if (!res.ok) {
-    let detail = res.statusText;
+    let body: unknown = null;
     try {
-      const body = await res.json();
-      detail = typeof body.detail === "string" ? body.detail : JSON.stringify(body.detail);
+      body = await res.json();
     } catch {
       /* not JSON */
     }
-    throw new Error(detail || `Request failed (${res.status})`);
+    throw new ApiError(res.status, errorMessage(body, res.status, res.statusText));
   }
   return res.json() as Promise<T>;
 }
@@ -128,7 +163,13 @@ export const api = {
   settings: () => request<Settings>("/api/settings"),
   jobs: () => request<Job[]>("/api/jobs"),
   job: (id: string) => request<Job>(`/api/jobs/${id}`),
-  deleteJob: (id: string) => request<{ status: string }>(`/api/jobs/${id}`, { method: "DELETE" }),
+  /**
+   * Done or failed jobs are deleted at once ("deleted"). A queued or running job is
+   * stopped first ("cancelling"): the worker removes it at its next checkpoint.
+   */
+  deleteJob: (id: string) => request<{ status: "deleted" | "cancelling" | string }>(`/api/jobs/${id}`, { method: "DELETE" }),
+  /** Start a failed job again from the stage where it stopped. */
+  retryJob: (id: string) => request<Job>(`/api/jobs/${id}/retry`, { method: "POST" }),
   upload: (file: File, choice: ChoiceId) => {
     const form = new FormData();
     form.append("file", file);
@@ -146,7 +187,9 @@ export const api = {
   importGlossary: (file: File) => {
     const form = new FormData();
     form.append("file", file);
-    return request<{ imported: number }>("/api/glossary/import", { method: "POST", body: form });
+    return request<Partial<GlossaryImportResult>>("/api/glossary/import", { method: "POST", body: form }).then(
+      (r): GlossaryImportResult => ({ imported: r.imported ?? 0, skipped: r.skipped ?? 0, errors: r.errors ?? [] }),
+    );
   },
   tips: () => request<Tips>("/api/tips"),
   models: () => request<ModelInfo[]>("/api/models"),

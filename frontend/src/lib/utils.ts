@@ -14,33 +14,56 @@ export function formatEta(seconds: number | null | undefined): string {
   return `about ${hours} h ${minutes % 60} min left`;
 }
 
-export function formatDate(iso: string): string {
-  const d = new Date(iso);
-  const today = new Date();
-  const sameDay = d.toDateString() === today.toDateString();
-  return sameDay
-    ? `Today, ${d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`
-    : d.toLocaleString([], { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
-}
-
 export function formatBytes(n: number): string {
   if (!n) return "0 MB";
   const gb = n / 1024 ** 3;
   return gb >= 1 ? `${gb.toFixed(1)} GB` : `${Math.max(1, Math.round(n / 1024 ** 2))} MB`;
 }
 
-export async function notify(title: string, body: string): Promise<void> {
-  if (!("Notification" in window) || Notification.permission !== "granted") return;
-  if (!document.hidden) return;
+/** An error message as a full sentence, so it can be followed by another one. */
+export function asSentence(message: string): string {
+  const m = message.trim();
+  return !m || /[.!?…]$/.test(m) ? m : `${m}.`;
+}
+
+/** True while the person is looking at this tab (visible and focused). */
+export function pageHasAttention(): boolean {
+  return document.visibilityState === "visible" && document.hasFocus();
+}
+
+/**
+ * Show a desktop (Windows) notification. Returns false when the browser can't show one
+ * (no permission, or not supported), so the caller can show an in-app message instead.
+ */
+export function notify(title: string, body: string, onClick?: () => void): boolean {
+  if (!("Notification" in window) || Notification.permission !== "granted") return false;
   try {
-    new Notification(title, { body, icon: "/favicon.svg" });
+    const n = new Notification(title, { body, icon: "/favicon.svg" });
+    n.onclick = () => {
+      window.focus();
+      onClick?.();
+      n.close();
+    };
+    return true;
   } catch {
-    /* some browsers only allow notifications from a service worker */
+    return false; // some browsers only allow notifications from a service worker
   }
 }
 
-export function askNotificationPermission(): void {
-  if ("Notification" in window && Notification.permission === "default") {
-    void Notification.requestPermission();
+export type NotificationSupport = "unsupported" | NotificationPermission;
+
+export function notificationSupport(): NotificationSupport {
+  return "Notification" in window ? Notification.permission : "unsupported";
+}
+
+export async function askNotificationPermission(): Promise<NotificationSupport> {
+  if (!("Notification" in window)) return "unsupported";
+  if (Notification.permission === "default") {
+    try {
+      return await Notification.requestPermission();
+    } catch {
+      return Notification.permission;
+    }
   }
+  return Notification.permission;
 }
