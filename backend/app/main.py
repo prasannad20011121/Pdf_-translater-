@@ -13,6 +13,7 @@ import random
 import re
 import shutil
 import threading
+import unicodedata
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
@@ -30,6 +31,7 @@ from sqlalchemy import delete, func, select, update
 from .config import CHOICES, FRONTEND_DIST, get_settings
 from .db import get_engine, session_scope
 from .model_manager import ModelManager, available_memory_gb
+from .model_store import PackImportError
 from .models import (
     DONE,
     FAILED,
@@ -61,7 +63,7 @@ TIPS = [
     "Sentences you correct are remembered and reused automatically in later documents.",
     "Amber and red sentences are the only ones you need to check.",
     "Choose Fast for routine circulars and Best quality for tenders and contracts.",
-    "You can close this page: a notification appears when the translation is ready.",
+    "You can leave this page and keep working. Keep this browser tab open to get a notification when the translation is ready.",
     "Add recurring terms to the glossary so every document uses the same English.",
 ]
 
@@ -295,8 +297,11 @@ def import_pack(req: ImportRequest) -> dict[str, Any]:
     pack = Path(req.path)
     if not pack.is_dir():
         raise HTTPException(400, "Folder not found")
-    imported = manager().store.import_pack(pack, log=lambda m: None)
-    return {"imported": imported}
+    try:
+        report = manager().store.import_pack_report(pack, log=lambda m: None)
+    except PackImportError as e:
+        raise HTTPException(400, str(e)) from None
+    return {"imported": report["imported"], "failed": report.get("failed", {})}
 
 
 # ---- jobs -----------------------------------------------------------------------------
@@ -549,8 +554,10 @@ def glossary_list() -> list[dict[str, Any]]:
 @app.post("/api/glossary")
 def glossary_add(term: TermIn) -> dict[str, Any]:
     with session_scope() as db:
-        existing = db.scalars(select(GlossaryTerm).where(GlossaryTerm.hindi == term.hindi.strip())).first()
-        g = existing or GlossaryTerm(hindi=term.hindi.strip())
+        # One Unicode form (NFC) for every term, so lookups match however it was typed.
+        hindi = unicodedata.normalize("NFC", term.hindi.strip())
+        existing = db.scalars(select(GlossaryTerm).where(GlossaryTerm.hindi == hindi)).first()
+        g = existing or GlossaryTerm(hindi=hindi)
         g.english, g.note = term.english.strip(), term.note.strip()
         db.add(g)
         db.flush()
@@ -624,7 +631,7 @@ async def glossary_import(file: UploadFile = File(...)) -> dict[str, Any]:
             if len(cells) < 2 or not cells[0] or not cells[1]:
                 skip(row_no, "needs both a Hindi term and its English")
                 continue
-            hindi, english = cells[0], cells[1]
+            hindi, english = unicodedata.normalize("NFC", cells[0]), cells[1]
             note = cells[2] if len(cells) > 2 else ""
             if "\ufffd" in hindi or "?" in hindi or not has_devanagari(hindi):
                 skip(row_no, f'"{hindi[:40]}" has no Hindi letters (was the file saved as CSV UTF-8?)')

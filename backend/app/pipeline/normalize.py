@@ -11,7 +11,7 @@ DEVANAGARI_DIGITS = str.maketrans("\u0966\u0967\u0968\u0969\u096a\u096b\u096c\u0
 # word joiner). ZWJ/ZWNJ (U+200D/U+200C) are kept: they change how conjuncts render.
 _INVISIBLE = re.compile("[\ufeff\xad\u200b\u2060]")
 # Control characters (PDF text layers sometimes contain NUL bytes); keep tab and newline.
-_CONTROL = re.compile("[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]")
+_CONTROL = re.compile("[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f\ud800-\udfff\ufffe\uffff]")
 _SPACES = re.compile("[ \t\xa0\u2000-\u200a\u202f\u205f\u3000]+")
 # Typists often use "|" as the full stop (purna viram) after a Devanagari word.
 _PIPE_DANDA = re.compile("(?<=[\u0900-\u097f])\\s*\\|(?=\\s|$)", re.MULTILINE)

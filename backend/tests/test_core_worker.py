@@ -468,11 +468,18 @@ def test_copied_text_on_flagged_page_is_amber(client, app_env, pdfs, runner, mon
 # ---- memory and "nothing could translate" ---------------------------------------------------
 
 def _no_memory(monkeypatch, draft_too: bool = True):
-    from app import model_manager, worker
+    """Simulate a laptop with too little free memory (for every model, or only the final ones)."""
+    from app.model_manager import ModelManager, Readiness
 
-    monkeypatch.setattr(worker, "fits_in_memory", lambda gb: False)
-    if draft_too:
-        monkeypatch.setattr(model_manager, "fits_in_memory", lambda gb: False)
+    real = ModelManager.memory_check
+
+    def check(self, model_id, vision=False):
+        entry = self.store.entry(model_id)
+        if draft_too or "draft" not in entry.roles:
+            return Readiness(False, f"not enough free memory for {entry.label}: close other apps", temporary=True)
+        return real(self, model_id, vision)
+
+    monkeypatch.setattr(ModelManager, "memory_check", check)
 
 
 def test_no_free_memory_fails_with_an_actionable_error_and_retry_works(client, pdfs, manager, runner, monkeypatch):
@@ -495,15 +502,22 @@ def test_no_free_memory_fails_with_an_actionable_error_and_retry_works(client, p
 
 
 def test_memory_recovers_while_waiting(client, pdfs, runner, monkeypatch):
-    from app import model_manager
+    from app.model_manager import ModelManager, Readiness
 
-    state = {"calls": 0}
+    state = {"attempts": 0}
+    real_check, real_draft = ModelManager.memory_check, ModelManager.draft_model
 
-    def fits(gb):
-        state["calls"] += 1
-        return state["calls"] > 2  # the user closed Chrome
+    def draft_model(self):
+        state["attempts"] += 1
+        return real_draft(self)
 
-    monkeypatch.setattr(model_manager, "fits_in_memory", fits)
+    def check(self, model_id, vision=False):
+        if state["attempts"] > 2:  # the user closed Chrome before the third try
+            return real_check(self, model_id, vision)
+        return Readiness(False, "not enough free memory: close other apps", temporary=True)
+
+    monkeypatch.setattr(ModelManager, "draft_model", draft_model)
+    monkeypatch.setattr(ModelManager, "memory_check", check)
     job = upload(client, pdfs["clean"], choice="fast")
     runner.run(job["id"])
     data = client.get(f"/api/jobs/{job['id']}").json()
@@ -560,7 +574,7 @@ def test_eta_only_counts_a_final_stage_that_will_run(client, app_env, pdfs, monk
         return job_row(job["id"]).eta_seconds
 
     assert eta_after_draft("auto") > 0  # the final model will run after the draft
-    monkeypatch.setattr(worker, "fits_in_memory", lambda gb: False)
+    _no_memory(monkeypatch, draft_too=False)
     assert eta_after_draft("auto") == 0  # it won't fit: no phantom final-stage time
     assert eta_after_draft("fast") == 0
 

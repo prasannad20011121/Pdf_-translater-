@@ -41,6 +41,7 @@ MESSAGES = {
     "ocr": "Page text came from OCR that may be unreliable",
     "ocr_numbers": "OCR read a number in two different ways: check it against the page",
     "legacy": "Text in an old Hindi font (Kruti Dev or similar) could not be read",
+    "truncated": "The translation may be cut short: compare it with the Hindi",
     "untranslated": "Not translated: needs a human",
 }
 

@@ -38,7 +38,7 @@ from sqlalchemy import func, or_, select, update
 
 from .config import Settings, get_settings
 from .db import session_scope
-from .model_manager import ModelManager, fits_in_memory
+from .model_manager import ModelManager
 from .models import (
     DONE,
     FAILED,
@@ -61,8 +61,8 @@ from .pipeline.quality import QUALITY_THRESHOLD, assess
 from .pipeline.render.outputs import render_docx, render_txt
 from .pipeline.segment import split_sentences
 from .pipeline.select import Candidate, choose
-from .pipeline.translate.base import DocContext, Translator
-from .pipeline.validate import AMBER, GREEN, RED, CheckResult, check
+from .pipeline.translate.base import TRUNCATED, DocContext, Translator
+from .pipeline.validate import AMBER, GREEN, RED, CheckResult, check, glossary_hits
 
 log = logging.getLogger("pdft.worker")
 
@@ -129,6 +129,19 @@ def stored_checks(data: dict | None) -> CheckResult:
     if not data:
         return CheckResult(False, {"empty": "red"})
     return CheckResult(bool(data.get("usable")), dict(data.get("issues", {})))
+
+
+def _engine_flags(engine: Translator, n: int) -> list[set[str]]:
+    """The warnings the engine reported for its last translate() call, one set per input."""
+    flags = list(getattr(engine, "last_flags", None) or ())
+    return [set(f) for f in flags[:n]] + [set() for _ in range(n - len(flags))]
+
+
+def _with_flags(result: CheckResult, flags: set[str]) -> CheckResult:
+    """An engine that thinks its output was cut short makes the sentence worth a check."""
+    if result.usable and TRUNCATED in flags and "truncated" not in result.issues:
+        result.issues["truncated"] = AMBER
+    return result
 
 
 def with_source_issues(seg: Segment, confidence: str | None, issues: list[str]) -> tuple[str | None, list[str]]:
@@ -471,6 +484,8 @@ class JobRunner:
         except BaseException:
             self._unload(engine)
             raise
+        for note in getattr(engine, "notes", None) or ():
+            self._note(job_id, f"{engine.label}: {note}")
         return engine
 
     def _unload(self, engine: Translator) -> None:
@@ -492,14 +507,26 @@ class JobRunner:
         self._note(job_id, f"{engine.label} stopped: {_describe(error)}. {rest}")
 
     def _ready_and_fits(self, model_id: str) -> tuple[bool, bool]:
+        """(installed and runnable, and fits in memory right now). The memory check
+        counts the model's load peak and the profile's memory budget."""
         try:
             ready = self.manager.readiness(model_id).ready
-            return ready, ready and fits_in_memory(self.manager.store.entry(model_id).ram_gb)
+            return ready, ready and self.manager.fits(model_id)
         except KeyError:
             return False, False
 
     def _any_ready(self, model_ids: Iterable[str | None]) -> bool:
         return any(self._ready_and_fits(m)[0] for m in model_ids if m)
+
+    def _waiting_helps(self, model_ids: Iterable[str | None]) -> bool:
+        """Is a ready model held back only by free memory (so closing apps would help)?"""
+        for m in model_ids:
+            try:
+                if m and self.manager.readiness(m).ready and self.manager.memory_check(m).temporary:
+                    return True
+            except KeyError:
+                continue
+        return False
 
     def _retry_for_memory(self, job_id: str, what: str, attempt: Callable[[], T | None],
                           blocked: Callable[[], bool]) -> T | None:
@@ -710,11 +737,14 @@ class JobRunner:
         # draft_model() picks an installed draft model that fits in free memory, so if
         # one is installed but none was picked, memory is what's missing.
         model_id = self._retry_for_memory(job_id, "the quick draft", self.manager.draft_model,
-                                          lambda: self._any_ready(draft_ids))
+                                          lambda: self._waiting_helps(draft_ids))
         if model_id is None:
-            if self._any_ready(draft_ids):
+            if self._waiting_helps(draft_ids):
                 self._trouble.add("memory")
                 self._note(job_id, "Quick draft skipped: not enough free memory (close other apps)")
+            elif self._any_ready(draft_ids):
+                ready = [m for m in draft_ids if m and self._ready_and_fits(m)[0]]
+                self._note(job_id, f"Quick draft skipped: {self.manager.memory_check(ready[0]).reason}")
             else:
                 self._note(job_id, "Quick draft skipped: IndicTrans2 is not installed")
             return
@@ -744,8 +774,9 @@ class JobRunner:
                     except Exception as e:  # out of memory, crash...: keep what we have
                         error = e
                         continue
-                    for seg, out in zip(batch, outputs):
-                        result = check(seg.source, out, glossary=glossary)
+                    flags = _engine_flags(engine, len(batch))
+                    for seg, out, flag in zip(batch, outputs, flags):
+                        result = _with_flags(check(seg.source, out, glossary=glossary), flag)
                         seg.draft, seg.draft_engine, seg.draft_checks = out or "", engine.id, result.to_dict()
                         # Show the draft straight away; the check stage makes the final choice.
                         if result.usable:
@@ -787,10 +818,14 @@ class JobRunner:
             if not ready.ready:
                 self._note(job_id, f"{entry.label} not used: {ready.reason}")
                 continue
-            if not fits_in_memory(entry.ram_gb):
-                self._trouble.add("memory")
-                self._final_memory_blocked = True
-                self._note(job_id, f"{entry.label} not used: not enough free memory (close other apps)")
+            memory = self.manager.memory_check(model_id)
+            if not memory.ready:
+                if memory.temporary:
+                    self._trouble.add("memory")
+                    self._final_memory_blocked = True
+                    self._note(job_id, f"{entry.label} not used: not enough free memory (close other apps)")
+                else:
+                    self._note(job_id, f"{entry.label} not used: {memory.reason}")
                 continue
             engine = self._load_engine(job_id, model_id)
             if engine is not None:
@@ -851,7 +886,7 @@ class JobRunner:
                     if not segs:
                         continue
                     protected = [protect(s.source) for s in segs]
-                    hits = [(hi, en) for hi, en in glossary if any(hi in s.source for s in segs)]
+                    hits = glossary_hits(" ".join(s.source for s in segs), glossary)
                     ctx = DocContext(subject=subject, previous_english=previous, glossary=hits)
                     texts = [p.text for p in protected] if engine.uses_placeholders else [s.source for s in segs]
                     t0 = time.monotonic()
@@ -860,15 +895,16 @@ class JobRunner:
                     except Exception as e:  # EngineUnavailable, crash, out of memory...
                         error = e
                     if error is None:
+                        flags = _engine_flags(engine, len(segs))
                         all_failed = all(o is None for o in outputs)
                         failures = failures + 1 if all_failed else 0
                         if not all_failed:  # timed-out chunks would skew the speed estimate
                             good_time += time.monotonic() - t0
                             good_done += len(segs)
-                        for seg, prot, out in zip(segs, protected, outputs):
+                        for seg, prot, out, flag in zip(segs, protected, outputs, flags):
                             restored = restore(out, prot.items) if (out and engine.uses_placeholders) else None
                             text = restored.text if restored else out
-                            result = check(seg.source, text, restored=restored, glossary=glossary)
+                            result = _with_flags(check(seg.source, text, restored=restored, glossary=glossary), flag)
                             seg.final, seg.final_engine, seg.final_checks = text or "", engine.id, result.to_dict()
                             best = choose(seg.source, [
                                 Candidate(engine.id, text, result),

@@ -58,6 +58,9 @@ def _file_gb(path: Path | None) -> float:
 class Readiness:
     ready: bool
     reason: str = ""
+    # True when the only obstacle is free memory right now: closing other apps can
+    # help, so it's worth waiting. A model that is too big for this laptop is not.
+    temporary: bool = False
 
 
 class ModelManager:
@@ -120,7 +123,8 @@ class ModelManager:
         free = available_memory_gb()
         if free < need + MEMORY_MARGIN_GB:
             return Readiness(False, f"not enough free memory for {entry.label} (needs about "
-                                    f"{need + MEMORY_MARGIN_GB:.1f} GB, {free:.1f} GB free): close other apps")
+                                    f"{need + MEMORY_MARGIN_GB:.1f} GB, {free:.1f} GB free): close other apps",
+                             temporary=True)
         return Readiness(True)
 
     def fits(self, model_id: str, vision: bool = False) -> bool:
