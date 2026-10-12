@@ -1,6 +1,33 @@
 # Tested model catalog. Users can only choose models listed here (PLAN.md §4.4, §4.5).
-# Repo commits ("revision") and sha256 checksums are pinned during Phase 0;
-# until then revision "main" is used and checksums are recorded on first download.
+#
+# Fields:
+#   ram_gb          memory while the model runs (the memory guard's "running" size)
+#   load_ram_gb     peak while loading, when higher than ram_gb (IndicTrans2 loads fp32
+#                   weights before quantising them to int8). The guard checks
+#                   max(ram_gb, load_ram_gb) against free memory and the profile's
+#                   ram_budget_gb. Measure both on the test laptops in Phase 0.
+#   files           llama-gguf files; `optional: true` = not needed for text translation
+#                   (the mmproj vision projector is only loaded for page re-reading)
+#   required_files  files that must all be present before a model counts as installed
+#                   (a nested list means "one of these")
+#   allow_patterns  what to fetch from a Hugging Face repo snapshot
+#   checksums       pinned sha256 per file (path relative to the model folder)
+#   extra_args      extra llama-server flags, passed as-is (for flags that only some
+#                   llama.cpp builds have; the app already passes -np 1, --cache-ram 0
+#                   and --ctx-checkpoints when the bundled build supports them)
+#
+# PHASE 0 - PIN BEFORE ROLL-OUT (PLAN.md §4.5, §12):
+#   1. Replace every `revision: main` with the exact commit hash of the tested snapshot.
+#   2. Fill in `sha256:` for every GGUF file and, for IndicTrans2, a `checksums:` entry
+#      for every downloaded file. The *.py files are REQUIRED: they are executed by
+#      trust_remote_code, so a model pack whose *.py files have no pinned checksum is
+#      refused on import (only a direct download from the pinned repo is accepted).
+#      Get the values with: python -m app.model_store download <id>, then copy them
+#      from models/store/<id>/.pdft-manifest.json after checking them on the build
+#      machine.
+#   3. Confirm every file name below against the pinned revision, e.g.
+#      HfApi().list_repo_files(repo, revision=...). Hub file paths are case-sensitive.
+# Until then revision "main" is used and checksums are recorded on first download.
 
 - id: gemma4-e2b
   label: "Gemma 4 E2B"
@@ -10,7 +37,7 @@
     revision: main
   files:
     model: { name: gemma-4-E2B-it-Q4_K_M.gguf, sha256: null }
-    mmproj: { name: mmproj-gemma-4-E2B-it-f16.gguf, sha256: null }
+    mmproj: { name: mmproj-gemma-4-E2B-it-f16.gguf, sha256: null, optional: true }
   extra_args: []
   ram_gb: 4.0
   min_profile: laptop-8gb
@@ -20,28 +47,51 @@
 - id: gemma4-e4b
   label: "Gemma 4 E4B"
   kind: llama-gguf
+  # Exact-case names as pinned by other projects for this repo (the model file was seen
+  # pinned at 4,977,171,584 bytes); the Hub could not be reached to confirm them, so
+  # check them in Phase 0. Hub file paths are case-sensitive: the earlier lowercase
+  # "gemma-4-e4b-it-Q4_K_M.gguf" would 404. Alternative from the same publisher as E2B:
+  # ggml-org/gemma-4-E4B-it-GGUF (listed in llama.cpp docs/multimodal.md), whose files
+  # would be gemma-4-E4B-it-Q4_K_M.gguf and mmproj-gemma-4-E4B-it-f16.gguf (unconfirmed).
   source:
-    hf_repo: unsloth/gemma-4-e4b-it-GGUF
+    hf_repo: unsloth/gemma-4-E4B-it-GGUF
     revision: main
   files:
-    model: { name: gemma-4-e4b-it-Q4_K_M.gguf, sha256: null }
-    mmproj: { name: mmproj-F16.gguf, sha256: null }
+    model: { name: gemma-4-E4B-it-Q4_K_M.gguf, sha256: null }
+    mmproj: { name: mmproj-F16.gguf, sha256: null, optional: true }
   extra_args: []
   ram_gb: 6.5
   min_profile: laptop-12gb
   licence: Apache-2.0
   roles: [translate, reread]
 
+# IndicTrans2 Hugging Face repos keep their SentencePiece models as model.SRC and
+# model.TGT (no extension), so they must be listed explicitly: "*.model" doesn't match
+# them. The weights are taken from model.safetensors only (pytorch_model.bin is a
+# pickle, which can run code when loaded). Confirm the file list at the pinned revision.
 - id: indictrans2-indic-en-1b
   label: "IndicTrans2 1B (Indic to English)"
   kind: indictrans2-hf
   source:
     hf_repo: ai4bharat/indictrans2-indic-en-1B
     revision: main
-  allow_patterns: ["*.json", "*.py", "*.safetensors", "*.model", "*.txt", "dict.*"]
+  allow_patterns: ["*.json", "*.py", "*.safetensors", "model.SRC", "model.TGT", "dict.*"]
+  required_files:
+    - config.json
+    - tokenizer_config.json
+    - dict.SRC.json
+    - dict.TGT.json
+    - model.SRC
+    - model.TGT
+    - configuration_indictrans.py
+    - modeling_indictrans.py
+    - tokenization_indictrans.py
+    - [model.safetensors, model.safetensors.index.json]
+  checksums: {}   # Phase 0: pin every file, the *.py files above all
   src_lang: hin_Deva
   tgt_lang: eng_Latn
-  ram_gb: 1.8
+  ram_gb: 1.8       # int8, running
+  load_ram_gb: 5.0  # ~1.1B fp32 parameters (4.5 GB) + runtime, before int8 quantisation
   min_profile: laptop-8gb
   licence: MIT
   roles: [draft]
@@ -52,10 +102,23 @@
   source:
     hf_repo: ai4bharat/indictrans2-indic-en-dist-200M
     revision: main
-  allow_patterns: ["*.json", "*.py", "*.safetensors", "*.model", "*.txt", "dict.*"]
+  allow_patterns: ["*.json", "*.py", "*.safetensors", "model.SRC", "model.TGT", "dict.*"]
+  required_files:
+    - config.json
+    - tokenizer_config.json
+    - dict.SRC.json
+    - dict.TGT.json
+    - model.SRC
+    - model.TGT
+    - configuration_indictrans.py
+    - modeling_indictrans.py
+    - tokenization_indictrans.py
+    - [model.safetensors, model.safetensors.index.json]
+  checksums: {}   # Phase 0: pin every file, the *.py files above all
   src_lang: hin_Deva
   tgt_lang: eng_Latn
-  ram_gb: 0.8
+  ram_gb: 0.8       # int8, running
+  load_ram_gb: 1.4  # ~0.2B fp32 parameters (0.9 GB) + runtime, before int8 quantisation
   min_profile: laptop-8gb
   licence: MIT
   roles: [draft]

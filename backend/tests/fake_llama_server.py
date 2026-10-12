@@ -3,7 +3,13 @@
 Accepts the same command-line flags the app passes, serves /health and an
 OpenAI-style /v1/chat/completions that "translates" each numbered sentence by
 keeping its placeholders, so the app's JSON and placeholder handling is exercised.
-Set FAKE_LLAMA_MODE=garbage to return unusable output.
+
+Environment switches:
+- FAKE_LLAMA_MODE=garbage  return unusable output
+- FAKE_LLAMA_MODE=crash    write an error to stderr and exit at once
+- FAKE_LLAMA_OLD=1         behave like an older build: no --cache-ram/--ctx-checkpoints,
+                           and refuse unknown flags (as llama-server does)
+- FAKE_LLAMA_ARGV_FILE     write the command-line arguments (JSON) to this file
 """
 
 import argparse
@@ -53,14 +59,26 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser()
+    old = os.environ.get("FAKE_LLAMA_OLD") == "1"
+    ap = argparse.ArgumentParser(prog="llama-server")
     ap.add_argument("-m")
     ap.add_argument("-c")
     ap.add_argument("-t")
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--port", type=int, required=True)
     ap.add_argument("--mmproj")
-    args, _ = ap.parse_known_args()
+    ap.add_argument("-np", "--parallel")
+    if not old:
+        ap.add_argument("-cram", "--cache-ram")
+        ap.add_argument("-ctxcp", "--ctx-checkpoints")
+    args = ap.parse_args() if old else ap.parse_known_args()[0]
+    if os.environ.get("FAKE_LLAMA_ARGV_FILE"):
+        with open(os.environ["FAKE_LLAMA_ARGV_FILE"], "w", encoding="utf-8") as f:
+            json.dump(sys.argv[1:], f)
+    if os.environ.get("FAKE_LLAMA_MODE") == "crash":
+        print("error: failed to load model: tensor data is not within the file bounds", file=sys.stderr)
+        sys.exit(3)
+    print(f"fake llama-server listening on {args.host}:{args.port}", file=sys.stderr, flush=True)
     ThreadingHTTPServer((args.host, args.port), Handler).serve_forever()
 
 
