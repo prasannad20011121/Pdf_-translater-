@@ -1,5 +1,5 @@
 import { CheckCircle2, Cpu, Download, FolderInput, HardDrive, Monitor, Moon, Sun, XCircle } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -28,7 +28,12 @@ export default function SettingsPage() {
   const [models, setModels] = useState<ModelInfo[]>([]);
   const [theme, setTheme] = useState<ThemePreference>(getThemePreference());
   const [packPath, setPackPath] = useState("");
-  const [packMsg, setPackMsg] = useState<string | null>(null);
+  const [packMsg, setPackMsg] = useState<{ kind: "ok" | "error" | "info"; text: string } | null>(null);
+  // An import copies gigabytes and replaces the model folder, so only one runs at a time.
+  const [importing, setImporting] = useState(false);
+  const importingRef = useRef(false);
+  const [downloadErrors, setDownloadErrors] = useState<Record<string, string>>({});
+  const [starting, setStarting] = useState<Set<string>>(new Set());
 
   const loadModels = useCallback(() => api.models().then(setModels).catch(() => {}), []);
   useEffect(() => {
@@ -44,14 +49,46 @@ export default function SettingsPage() {
   }, [models, loadModels, refresh]);
 
   const importPack = async () => {
-    setPackMsg("Importing…");
+    if (importingRef.current || !packPath.trim()) return;
+    importingRef.current = true;
+    setImporting(true);
+    setPackMsg({ kind: "info", text: "Importing… Large models can take several minutes to copy. Keep this page open." });
     try {
-      const r = await api.importPack(packPath);
-      setPackMsg(r.imported.length ? `Imported: ${r.imported.join(", ")}` : "No catalog models found in that folder.");
+      const r = await api.importPack(packPath.trim());
+      setPackMsg(
+        r.imported.length
+          ? { kind: "ok", text: `Imported: ${r.imported.join(", ")}` }
+          : { kind: "error", text: "No catalog models found in that folder." },
+      );
+    } catch (e) {
+      setPackMsg({ kind: "error", text: `Import failed: ${(e as Error).message}` });
+    } finally {
+      importingRef.current = false;
+      setImporting(false);
       void loadModels();
       void refresh();
+    }
+  };
+
+  const download = async (id: string) => {
+    if (starting.has(id)) return;
+    setStarting((s) => new Set(s).add(id));
+    setDownloadErrors((all) => {
+      const next = { ...all };
+      delete next[id];
+      return next;
+    });
+    try {
+      await api.downloadModel(id);
     } catch (e) {
-      setPackMsg((e as Error).message);
+      setDownloadErrors((all) => ({ ...all, [id]: `Could not start the download: ${(e as Error).message}` }));
+    } finally {
+      setStarting((s) => {
+        const next = new Set(s);
+        next.delete(id);
+        return next;
+      });
+      void loadModels();
     }
   };
 
@@ -156,10 +193,15 @@ export default function SettingsPage() {
                     {m.download.log[m.download.log.length - 1]}
                   </p>
                 )}
+                {downloadErrors[m.id] && <p className="text-xs text-bad">{downloadErrors[m.id]}</p>}
               </div>
               {m.kind !== "dev" && !m.installed && (
-                <Button variant="outline" disabled={!!m.download?.running} onClick={() => api.downloadModel(m.id).then(loadModels)}>
-                  {m.download?.running ? <Spinner /> : <Download className="h-4 w-4" aria-hidden />}
+                <Button
+                  variant="outline"
+                  disabled={!!m.download?.running || starting.has(m.id) || importing}
+                  onClick={() => void download(m.id)}
+                >
+                  {m.download?.running || starting.has(m.id) ? <Spinner /> : <Download className="h-4 w-4" aria-hidden />}
                   {m.download?.running ? "Downloading…" : "Download"}
                 </Button>
               )}
@@ -179,13 +221,25 @@ export default function SettingsPage() {
                 placeholder="Folder, e.g. D:\model-pack"
                 value={packPath}
                 onChange={(e) => setPackPath(e.target.value)}
+                disabled={importing}
                 aria-label="Model pack folder"
               />
-              <Button variant="outline" onClick={importPack} disabled={!packPath.trim()}>
-                Import
+              <Button variant="outline" onClick={() => void importPack()} disabled={importing || !packPath.trim()}>
+                {importing && <Spinner />}
+                {importing ? "Importing…" : "Import"}
               </Button>
             </div>
-            {packMsg && <p className="mt-2 text-xs text-muted-foreground">{packMsg}</p>}
+            {packMsg && (
+              <p
+                className={cn(
+                  "mt-2 text-xs",
+                  packMsg.kind === "error" ? "text-bad" : packMsg.kind === "ok" ? "text-good" : "text-muted-foreground",
+                )}
+                role={packMsg.kind === "error" ? "alert" : "status"}
+              >
+                {packMsg.text}
+              </p>
+            )}
           </div>
         </CardContent>
       </Card>
