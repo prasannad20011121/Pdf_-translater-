@@ -2,13 +2,17 @@
 name: laptop-8gb
 label: "8 GB laptop"
 ram_budget_gb: 4.5
-cpu_threads: auto            # cores - 1
+cpu_threads: auto            # physical cores - 1
 default_choice: auto
 choices:                     # user-facing choice -> catalog model id (null = IndicTrans2 only)
   auto: gemma4-e2b
   fast: null
   balanced: gemma4-e2b
 step_down: [gemma4-e2b]      # Auto tries these in order when memory is short, then IndicTrans2 only
+# The quick draft tries the 1B model first, but only if its load peak (catalog
+# load_ram_gb: fp32 weights before int8) fits free memory AND this 4.5 GB budget.
+# With the transformers runtime it doesn't, so 8 GB laptops use the 200M model;
+# a lighter 1B build (CTranslate2 int8, PLAN.md §4.2) would be picked automatically.
 quick_draft_model: indictrans2-indic-en-1b
 low_memory_draft_model: indictrans2-indic-en-200m
 llm:
@@ -16,4 +20,10 @@ llm:
   temperature: 0.2
   paragraph_max_sentences: 10
   timeout_s_per_sentence: 90
+  # llama-server memory limits (each is left out if the bundled build lacks the flag;
+  # null = don't pass it): one slot, no host-memory prompt cache (its default is
+  # 8 GiB and grows during long jobs), few context checkpoints.
+  parallel: 1
+  cache_ram_mib: 0
+  ctx_checkpoints: 2
 limits: { max_mb: 50, max_pages: 100, retention_days: 30 }

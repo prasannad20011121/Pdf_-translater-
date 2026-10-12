@@ -3,7 +3,7 @@
 name: dev
 label: "Developer (stand-in engine, NOT a real translation)"
 ram_budget_gb: 2
-cpu_threads: auto
+cpu_threads: auto            # physical cores - 1
 default_choice: auto
 choices:
   auto: dev-standin-llm
@@ -18,4 +18,10 @@ llm:
   temperature: 0.2
   paragraph_max_sentences: 10
   timeout_s_per_sentence: 30
+  # llama-server memory limits (each is left out if the bundled build lacks the flag;
+  # null = don't pass it): one slot, no host-memory prompt cache (its default is
+  # 8 GiB and grows during long jobs), few context checkpoints.
+  parallel: 1
+  cache_ram_mib: 0
+  ctx_checkpoints: 2
 limits: { max_mb: 50, max_pages: 100, retention_days: 30 }

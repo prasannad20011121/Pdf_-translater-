@@ -7,7 +7,9 @@ source checkout, from the Windows installer, and inside tests:
 - PDFT_PROFILE    force a profile (laptop-8gb, laptop-12gb, workstation, dev)
 - PDFT_MODELS     model store folder. Default: <repo>/models/store
 - PDFT_LLAMA_BIN  path to llama-server(.exe). Default: <repo>/bin/llama-server or PATH
-- PDFT_TESSERACT  path to tesseract(.exe). Default: PATH
+- PDFT_TESSERACT  path to tesseract(.exe). Default: PATH, then the usual Windows
+                  install folders (Program Files, or LocalAppData\\Programs for a
+                  per-user install)
 """
 
 from __future__ import annotations
@@ -17,7 +19,7 @@ import shutil
 from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 import psutil
 import yaml
@@ -50,7 +52,7 @@ class Profile:
         data = yaml.safe_load(path.read_text(encoding="utf-8"))
         threads = data.get("cpu_threads", "auto")
         if threads == "auto":
-            threads = max(1, (os.cpu_count() or 2) - 1)
+            threads = auto_cpu_threads()
         return cls(
             name=data["name"],
             label=data.get("label", data["name"]),
@@ -64,6 +66,21 @@ class Profile:
             llm=dict(data.get("llm", {})),
             limits=dict(data.get("limits", {})),
         )
+
+
+def physical_cores() -> int:
+    """Physical CPU cores (not hyper-threads). Falls back to the logical count."""
+    try:
+        cores = psutil.cpu_count(logical=False)
+    except Exception:  # psutil can fail inside some sandboxes and VMs
+        cores = None
+    return int(cores or os.cpu_count() or 2)
+
+
+def auto_cpu_threads() -> int:
+    """Cores minus one (PLAN.md §7.4), counting physical cores so llama.cpp and torch
+    don't oversubscribe hyper-threads and the laptop stays responsive."""
+    return max(1, physical_cores() - 1)
 
 
 def total_ram_gb() -> float:
@@ -101,6 +118,16 @@ class Settings:
         return self.jobs_dir / job_id
 
     @property
+    def logs_dir(self) -> Path:
+        """Engine logs, e.g. llama-server.log (its stderr)."""
+        return self.home / "logs"
+
+    @property
+    def run_dir(self) -> Path:
+        """PID files of child processes, so a crashed run's llama-server can be stopped."""
+        return self.home / "run"
+
+    @property
     def is_dev(self) -> bool:
         return self.profile.name == "dev"
 
@@ -116,8 +143,36 @@ def _find_llama_server() -> str | None:
     return shutil.which("llama-server")
 
 
-def _find_tesseract() -> str | None:
-    return os.environ.get("PDFT_TESSERACT") or shutil.which("tesseract")
+def _windows_tesseract_candidates(env: Mapping[str, str]) -> list[Path]:
+    """Where the UB Mannheim installer puts tesseract.exe (it does not add it to PATH)."""
+    out: list[Path] = []
+    for var in ("ProgramFiles", "ProgramW6432", "ProgramFiles(x86)"):
+        if env.get(var):
+            out.append(Path(env[var]) / "Tesseract-OCR" / "tesseract.exe")
+    if env.get("LOCALAPPDATA"):
+        local = Path(env["LOCALAPPDATA"])
+        out.append(local / "Programs" / "Tesseract-OCR" / "tesseract.exe")  # per-user install
+        out.append(local / "Tesseract-OCR" / "tesseract.exe")
+    out.append(REPO_ROOT / "bin" / "Tesseract-OCR" / "tesseract.exe")  # bundled copy
+    unique: dict[str, Path] = {}
+    for path in out:
+        unique.setdefault(str(path).lower(), path)
+    return list(unique.values())
+
+
+def _find_tesseract(env: Mapping[str, str] | None = None, windows: bool | None = None) -> str | None:
+    env = os.environ if env is None else env
+    windows = (os.name == "nt") if windows is None else windows
+    if env.get("PDFT_TESSERACT"):
+        return env["PDFT_TESSERACT"]
+    found = shutil.which("tesseract")
+    if found:
+        return found
+    if windows:
+        for candidate in _windows_tesseract_candidates(env):
+            if candidate.is_file():
+                return str(candidate)
+    return None
 
 
 @lru_cache(maxsize=1)
@@ -125,7 +180,8 @@ def get_settings() -> Settings:
     home = Path(os.environ.get("PDFT_HOME", REPO_ROOT / "data"))
     models_dir = Path(os.environ.get("PDFT_MODELS", REPO_ROOT / "models" / "store"))
     home.mkdir(parents=True, exist_ok=True)
-    (home / "jobs").mkdir(exist_ok=True)
+    for sub in ("jobs", "logs", "run"):
+        (home / sub).mkdir(exist_ok=True)
     models_dir.mkdir(parents=True, exist_ok=True)
     return Settings(
         home=home,

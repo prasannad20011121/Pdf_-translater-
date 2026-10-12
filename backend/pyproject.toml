@@ -25,7 +25,17 @@ dependencies = [
 
 [project.optional-dependencies]
 # IndicTrans2 quick draft (CPU). Heavy, so optional during UI development.
-indictrans2 = ["torch", "transformers", "sentencepiece", "IndicTransToolkit"]
+# IndicTransToolkit is a Cython extension with no Windows wheels (it would need the
+# MSVC Build Tools), so on Windows the app's built-in pure-Python processor is used
+# instead (app/pipeline/translate/indic_processor.py). sacremoses is pure Python and
+# gives the built-in processor the same Moses detokeniser the toolkit uses.
+indictrans2 = [
+    "torch",
+    "transformers",
+    "sentencepiece",
+    "sacremoses",
+    "IndicTransToolkit; sys_platform != 'win32'",
+]
 dev = ["pytest>=8"]
 
 [tool.setuptools.packages.find]
