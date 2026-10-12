@@ -116,8 +116,7 @@ def test_tesseract_reads_scanned_hindi(pdfs):
     text = " ".join(b.text for b in result.blocks)
     assert "निविदा" in text
     assert assess(text).score > 0.85
-    # The standard Hindi model sometimes misreads digits (e.g. "1234" as "]234").
-    # That is why OCR numbers are cross-checked in Phase 2 (PLAN.md §6.2); here we
-    # only require that most of the dates come through.
-    found = sum(d in text for d in ("12.03.2026", "25.03.2026", "5,00,000/-"))
-    assert found >= 1
+    # Every number must come through exactly. With "hin+eng" Tesseract dropped the
+    # digit 1 everywhere ("1234/2026" -> "234/2026", "12.03.2026" -> "2.03.2026").
+    for number in ("1234/2026", "12.03.2026", "25.03.2026", "5,00,000/-"):
+        assert number in text, (number, text)

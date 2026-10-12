@@ -14,38 +14,61 @@ import unicodedata
 from dataclasses import dataclass
 
 # Building blocks of a Devanagari syllable (akshara).
-_CONS = "[\u0915-\u0939\u0958-\u095f\u0978-\u097f]\u093c?"      # consonant (+ nukta)
-_INDEP_VOWEL = "[\u0904-\u0914\u0960\u0961\u0972-\u0977]"        # independent vowel
-_MATRA = "[\u093a\u093b\u093e-\u094c\u094e\u094f\u0955-\u0957\u0962\u0963]"  # vowel sign
-_VIRAMA = "\u094d[\u200c\u200d]?"                                # halant (+ ZWNJ/ZWJ)
-_MODIFIER = "[\u0900-\u0903]"                                    # chandrabindu, anusvara, visarga
+_CONS = "[क-हक़-य़ॸ-ॿ]़?"      # consonant (+ nukta)
+_INDEP_VOWEL = "[ऄ-औॠॡॲ-ॷ]"        # independent vowel
+_MATRA = "[ऺऻा-ौॎॏॕ-ॗॢॣ]"  # vowel sign
+_VIRAMA = "्[‌‍]?"                                # halant (+ ZWNJ/ZWJ)
+_MODIFIER = "[ऀ-ः]"                                    # chandrabindu, anusvara, visarga
 _SYLLABLE = (
     f"(?:(?:{_CONS}{_VIRAMA})*{_CONS}(?:{_VIRAMA}|{_MATRA}{{1,2}})?{_MODIFIER}{{0,2}}"
     f"|{_INDEP_VOWEL}{_MODIFIER}{{0,2}}"
-    "|\u093d|\u0950)"                                            # avagraha, om
+    "|ऽ|ॐ)"                                            # avagraha, om
 )
 _WORD_OK = re.compile(f"(?:{_SYLLABLE})+")
 
 _TOKEN = re.compile(r"\S+")
-_EDGE_PUNCT = "\u0964\u0965.,;:!?\"'()[]{}<>-\u2013\u2014/\\|\u201c\u201d\u2018\u2019\u2026*#%&+=_"
-_INNER_SEPARATORS = re.compile("[0-9\u0966-\u096f\u0964\u0965.,/\\-:]+")
+_EDGE_PUNCT = (
+    "।॥॰.,;:!?\"'()[]{}<>-‐‑‒–—―/\\|"
+    "“”‘’…*#%&+=_"
+    "•·₹‌‍"
+)
+# Devanagari letters and signs. The danda (U+0964/5), the Devanagari digits
+# (U+0966-096F) and the abbreviation sign ॰ (U+0970) are separators, not letters.
+_DEVA_LETTER = re.compile("[ऀ-ॣॱ-ॿ]")
+# Runs of Devanagari letters inside a token: "GeM-पोर्टल", "धारा-4(1)", "243(क)",
+# "₹5,000/-का", "सूचना/Tender" are judged on their Devanagari part only.
+_DEVA_RUN = re.compile("[ऀ-ॣॱ-ॿ‌‍]+")
+_ZW = "‌‍"
+
+# Below this many Devanagari words, a page is scored over all its tokens, so a
+# bilingual header on an English page can't pull the score down to 0.
+MIN_DEVA_WORDS_FOR_RATIO = 10
 
 
 @dataclass
 class TextQuality:
     deva_words: int
     valid_words: int
-    garbage_tokens: int  # tokens with letters that are neither Devanagari nor basic Latin
+    garbage_tokens: int  # tokens with letters that are neither Devanagari nor Latin
     latin_letters: int
     deva_letters: int
+    tokens: int = 0      # all non-empty tokens
 
     @property
     def score(self) -> float:
-        """Share of Devanagari-bearing tokens that look well formed (0..1)."""
-        total = self.deva_words + self.garbage_tokens
-        if total == 0:
-            return 1.0
-        return self.valid_words / total
+        """Share of tokens that look well formed (0..1).
+
+        Mostly-Hindi text is scored over its Devanagari-bearing and garbage tokens.
+        Text with only a few Hindi words (an English page with a bilingual header)
+        is scored over all tokens.
+        """
+        if self.deva_words >= MIN_DEVA_WORDS_FOR_RATIO or not self.tokens:
+            total = self.deva_words + self.garbage_tokens
+            if total == 0:
+                return 1.0
+            return self.valid_words / total
+        bad = (self.deva_words - self.valid_words) + self.garbage_tokens
+        return max(0.0, 1.0 - bad / self.tokens)
 
     @property
     def deva_ratio(self) -> float:
@@ -57,31 +80,53 @@ def _is_deva(ch: str) -> bool:
     return "ऀ" <= ch <= "ॿ"
 
 
+def _latin_like(ch: str) -> bool:
+    """Accented Latin letters (Latin-1 Supplement, Latin Extended-A/B): é, ü, Ø, ß."""
+    return "À" <= ch <= "ɏ"
+
+
 def assess(text: str) -> TextQuality:
-    deva_words = valid = garbage = latin = deva = 0
+    tokens = deva_words = valid = garbage = latin = deva = 0
     for raw in _TOKEN.findall(text):
-        tok = raw.strip(_EDGE_PUNCT)
+        # NFKC turns ligatures ("ﬁnancial") and full-width forms into plain letters.
+        # It leaves Devanagari as NFC has it.
+        tok = unicodedata.normalize("NFKC", raw).strip(_EDGE_PUNCT)
         if not tok:
             continue
+        tokens += 1
         has_d = False
+        foreign: list[str] = []  # letters that are neither Devanagari nor ASCII
+        has_ascii_letter = False
         for c in tok:
             if _is_deva(c):
-                has_d = True
+                if _DEVA_LETTER.match(c):
+                    has_d = True
                 if c.isalpha() or unicodedata.category(c).startswith("M"):
                     deva += 1
-            elif c.isascii() and c.isalpha():
-                latin += 1
+            elif c.isascii():
+                if c.isalpha():
+                    latin += 1
+                    has_ascii_letter = True
+            elif c.isalpha():
+                foreign.append(c)
+                if _latin_like(c):
+                    latin += 1
         if has_d:
             deva_words += 1
-            # Digits and the danda may sit inside a token, e.g. "1234/2026।"
-            core = _INNER_SEPARATORS.sub(" ", tok).split()
-            if core and all(_WORD_OK.fullmatch(part) for part in core):
+            runs = [r.strip(_ZW) for r in _DEVA_RUN.findall(tok)]
+            runs = [r for r in runs if r]
+            # A letter from another script inside a Hindi word ("Śावैध", "बə") is the
+            # typical sign of a broken text layer.
+            if runs and not foreign and all(_WORD_OK.fullmatch(r) for r in runs):
                 valid += 1
-        elif any(c.isalpha() and not c.isascii() for c in tok):
-            # Letters from other scripts (IPA, Latin-1 accents) in a Hindi document
-            # are almost always mis-mapped glyphs.
-            garbage += 1
-    return TextQuality(deva_words, valid, garbage, latin, deva)
+        elif foreign:
+            # Letters from other scripts (IPA, Greek...) are almost always mis-mapped
+            # glyphs. Accented Latin in a Latin word ("Café") and a lone symbol-font
+            # bullet extracted as a letter ("Ø") are fine.
+            latin_word = all(_latin_like(c) for c in foreign) and (has_ascii_letter or len(tok) == 1)
+            if not latin_word:
+                garbage += 1
+    return TextQuality(deva_words, valid, garbage, latin, deva, tokens)
 
 
 QUALITY_THRESHOLD = 0.85
