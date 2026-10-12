@@ -3,15 +3,21 @@
 from __future__ import annotations
 
 import asyncio
+import codecs
 import csv
 import io
 import json
+import logging
+import os
 import random
+import re
 import shutil
 import threading
 from contextlib import asynccontextmanager
-from pathlib import Path
+from datetime import datetime, timezone
+from pathlib import Path, PurePosixPath
 from typing import Any
+from urllib.parse import urlsplit
 
 import psutil
 import pymupdf
@@ -19,16 +25,36 @@ from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select, update
 
 from .config import CHOICES, FRONTEND_DIST, get_settings
 from .db import get_engine, session_scope
 from .model_manager import ModelManager, available_memory_gb
-from .models import DONE, FAILED, GlossaryTerm, Job, Page, Segment, TMEntry
+from .models import (
+    DONE,
+    FAILED,
+    QUEUED,
+    GlossaryTerm,
+    Job,
+    Page,
+    Segment,
+    TMEntry,
+    new_id,
+)
+from .pipeline.normalize import has_devanagari
 from .pipeline.ocr import tesseract
 from .pipeline.render.outputs import output_name
 from .pipeline.validate import MESSAGES
-from .worker import JobRunner, cleanup_old_jobs
+from .worker import (
+    JobGone,
+    JobRunner,
+    cleanup_old_jobs,
+    job_counts,
+    output_path,
+    remove_job_files,
+)
+
+log = logging.getLogger("pdft.api")
 
 TIPS = [
     "Press ↑ and ↓ to move between sentences on the review screen, and E or Enter to correct one.",
@@ -39,11 +65,21 @@ TIPS = [
     "Add recurring terms to the glossary so every document uses the same English.",
 ]
 
+JOB_ID = re.compile(r"[0-9a-f]{32}")
+# The app only answers to this laptop's own names. Checking Host defeats DNS
+# rebinding; checking Origin stops other websites from posting to the API (CSRF).
+# "testserver" is the host name used by FastAPI's TestClient.
+ALLOWED_HOSTS = frozenset({"127.0.0.1", "localhost", "::1", "testserver"})
+UNSAFE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
+
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     get_engine()
-    cleanup_old_jobs(get_settings())
+    try:
+        cleanup_old_jobs(get_settings())
+    except Exception:  # never stop the app from starting
+        log.exception("clean-up of old jobs failed")
     yield
 
 
@@ -56,9 +92,43 @@ CSP = (
 )
 
 
+def host_name(value: str | None) -> str | None:
+    """The host part of a Host header ("127.0.0.1:8080", "[::1]:8080"), lower-cased."""
+    value = (value or "").strip().lower()
+    if not value:
+        return None
+    if value.startswith("["):
+        end = value.find("]")
+        host, rest = value[1:end], value[end + 1:]
+        if end < 0 or (rest and not (rest.startswith(":") and rest[1:].isdigit())):
+            return None
+        return host
+    host, sep, port = value.partition(":")
+    if sep and not port.isdigit():
+        return None
+    return host or None
+
+
+def same_site(request: Request) -> bool:
+    origin = request.headers.get("origin")
+    if origin is not None:
+        try:
+            if urlsplit(origin).hostname not in ALLOWED_HOSTS:
+                return False
+        except ValueError:
+            return False
+    return request.headers.get("sec-fetch-site", "").lower() != "cross-site"
+
+
 @app.middleware("http")
-async def security_headers(request: Request, call_next):
-    response = await call_next(request)
+async def guard_and_headers(request: Request, call_next):
+    if host_name(request.headers.get("host")) not in ALLOWED_HOSTS:
+        response: Response = JSONResponse(
+            {"detail": "This address is not allowed. Open the translator at http://127.0.0.1"}, status_code=400)
+    elif request.method in UNSAFE_METHODS and not same_site(request):
+        response = JSONResponse({"detail": "Request from another website blocked"}, status_code=403)
+    else:
+        response = await call_next(request)
     response.headers.setdefault("Content-Security-Policy", CSP)
     response.headers.setdefault("X-Content-Type-Options", "nosniff")
     response.headers.setdefault("Referrer-Policy", "no-referrer")
@@ -71,6 +141,13 @@ def manager() -> ModelManager:
 
 # ---- serialisers --------------------------------------------------------------------
 
+def iso_utc(dt: datetime | None) -> str | None:
+    """ISO-8601 with an explicit UTC offset, so browsers don't read it as local time."""
+    if dt is None:
+        return None
+    return (dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt.astimezone(timezone.utc)).isoformat()
+
+
 def job_dict(job: Job, store=None) -> dict[str, Any]:
     labels = {}
     if store is not None:
@@ -81,8 +158,8 @@ def job_dict(job: Job, store=None) -> dict[str, Any]:
     return {
         "id": job.id,
         "filename": job.filename,
-        "created_at": job.created_at.isoformat(),
-        "updated_at": job.updated_at.isoformat() if job.updated_at else None,
+        "created_at": iso_utc(job.created_at),
+        "updated_at": iso_utc(job.updated_at),
         "status": job.status,
         "stage": job.stage,
         "stage_progress": round(job.stage_progress or 0, 4),
@@ -128,9 +205,17 @@ def page_dict(p: Page) -> dict[str, Any]:
     }
 
 
+def check_job_id(job_id: str) -> None:
+    """Job ids are 32 hex characters. Anything else never reaches the file system
+    (a crafted id such as \\\\server\\share would make Windows contact that server)."""
+    if not JOB_ID.fullmatch(job_id or ""):
+        raise HTTPException(404, "Job not found")
+
+
 def get_job_or_404(db, job_id: str) -> Job:
+    check_job_id(job_id)
     job = db.get(Job, job_id)
-    if job is None:
+    if job is None or job.cancel_requested:  # being deleted: gone for the user
         raise HTTPException(404, "Job not found")
     return job
 
@@ -235,30 +320,42 @@ async def create_job(
         doc = pymupdf.open(stream=data, filetype="pdf")
     except Exception:
         raise HTTPException(400, "This file is not a readable PDF") from None
-    if doc.needs_pass:
-        raise HTTPException(400, "Password-protected PDFs are not supported yet. Remove the password and try again.")
+    try:
+        if doc.needs_pass:
+            raise HTTPException(400, "Password-protected PDFs are not supported yet. Remove the password and try again.")
+        page_count = doc.page_count
+    finally:
+        doc.close()
     max_pages = int(s.profile.limits.get("max_pages", 100))
-    if doc.page_count > max_pages:
-        raise HTTPException(400, f"The PDF has {doc.page_count} pages; the limit is {max_pages}")
+    if page_count > max_pages:
+        raise HTTPException(400, f"The PDF has {page_count} pages; the limit is {max_pages}")
 
-    job = Job(filename=name[:255], choice=choice, model_requested=s.profile.choices.get(choice),
-              page_count=doc.page_count)
-    with session_scope() as db:
-        db.add(job)
-        db.flush()
-        job_id = job.id
+    # The file must be complete on disk before the worker can see the job: write it
+    # first (to a temporary name, then rename), and only then add the queued row.
+    job_id = new_id()
     job_dir = s.job_dir(job_id)
-    job_dir.mkdir(parents=True, exist_ok=True)
-    (job_dir / "source.pdf").write_bytes(data)
-    with session_scope() as db:
-        return job_dict(db.get(Job, job_id), manager().store)
+    try:
+        job_dir.mkdir(parents=True)
+        part = job_dir / "source.pdf.part"
+        part.write_bytes(data)
+        os.replace(part, job_dir / "source.pdf")
+        with session_scope() as db:
+            job = Job(id=job_id, filename=name[:255], choice=choice,
+                      model_requested=s.profile.choices.get(choice), page_count=page_count)
+            db.add(job)
+            db.flush()
+            return job_dict(job, manager().store)
+    except BaseException:
+        shutil.rmtree(job_dir, ignore_errors=True)
+        raise
 
 
 @app.get("/api/jobs")
 def list_jobs() -> list[dict[str, Any]]:
     store = manager().store
     with session_scope() as db:
-        return [job_dict(j, store) for j in db.scalars(select(Job).order_by(Job.created_at.desc()).limit(200))]
+        q = select(Job).where(Job.cancel_requested.is_(False)).order_by(Job.created_at.desc()).limit(200)
+        return [job_dict(j, store) for j in db.scalars(q)]
 
 
 @app.get("/api/jobs/{job_id}")
@@ -272,11 +369,43 @@ def get_job(job_id: str) -> dict[str, Any]:
 
 @app.delete("/api/jobs/{job_id}")
 def delete_job(job_id: str) -> dict[str, str]:
+    """A finished job is deleted at once. A queued or running one is cancelled: the
+    worker stops at its next checkpoint, unloads its model and removes the job."""
+    check_job_id(job_id)
+    with session_scope() as db:
+        # One conditional statement each, so a job can't change status in between.
+        removed = db.execute(delete(Job).where(
+            Job.id == job_id, Job.status.in_([DONE, FAILED]), Job.cancel_requested.is_(False))).rowcount
+        if not removed:
+            flagged = db.execute(update(Job).where(Job.id == job_id).values(cancel_requested=True)).rowcount
+            if not flagged:
+                raise HTTPException(404, "Job not found")
+    if removed:  # pages and segments go with it (ON DELETE CASCADE)
+        remove_job_files(get_settings(), job_id)
+        return {"status": "deleted"}
+    return {"status": "cancelling"}
+
+
+@app.post("/api/jobs/{job_id}/retry")
+def retry_job(job_id: str) -> dict[str, Any]:
+    """Try a failed job again, carrying on from the stage where it stopped."""
+    store = manager().store
     with session_scope() as db:
         job = get_job_or_404(db, job_id)
-        db.delete(job)
-    shutil.rmtree(get_settings().job_dir(job_id), ignore_errors=True)
-    return {"status": "deleted"}
+        if job.status != FAILED:
+            raise HTTPException(409, "Only a translation that failed can be tried again")
+        values: dict[str, Any] = {"status": QUEUED, "error": None, "message": "Waiting to start",
+                                  "eta_seconds": None, "stage_progress": 0.0}
+        if job.stage in ("extract", "draft", "final"):
+            values["final_fallback"] = False
+        if job.stage in ("extract", "draft"):
+            values["notes"] = []  # they described the attempt that failed
+        changed = db.execute(update(Job).where(
+            Job.id == job_id, Job.status == FAILED, Job.cancel_requested.is_(False)).values(**values)).rowcount
+        if not changed:
+            raise HTTPException(409, "Only a translation that failed can be tried again")
+        db.refresh(job)
+        return job_dict(job, store)
 
 
 @app.get("/api/jobs/{job_id}/segments")
@@ -291,8 +420,15 @@ def get_segments(job_id: str, page: int | None = None) -> list[dict[str, Any]]:
 
 @app.get("/api/jobs/{job_id}/pages/{page_no}.png")
 def page_image(job_id: str, page_no: int) -> FileResponse:
+    check_job_id(job_id)
+    if page_no < 1:
+        raise HTTPException(404, "Page not found")
+    with session_scope() as db:
+        job = get_job_or_404(db, job_id)
+        if page_no > max(job.page_count or 0, 0):
+            raise HTTPException(404, "Page not found")
     path = get_settings().job_dir(job_id) / "pages" / f"{page_no}.png"
-    if not path.exists():
+    if not path.is_file():
         raise HTTPException(404, "Page image not ready")
     return FileResponse(path, media_type="image/png")
 
@@ -307,9 +443,17 @@ def download(job_id: str, fmt: str) -> FileResponse:
             raise HTTPException(409, "The translation is not ready yet")
         name = output_name(job, fmt)
         stale = job.outputs_stale
-    path = get_settings().job_dir(job_id) / "out" / name
+    settings = get_settings()
+    path: Path | None = output_path(settings, job_id, fmt)
     if stale or not path.exists():
-        path = JobRunner(get_settings(), manager()).render(job_id)[fmt]
+        try:
+            path = JobRunner(settings, manager()).render(job_id).get(fmt)
+        except JobGone:
+            raise HTTPException(404, "Job not found") from None
+    if path is None or not path.exists():
+        detail = ("The Word file could not be created for this document. Download the text file instead."
+                  if fmt == "docx" else "The text file could not be created")
+        raise HTTPException(500, detail)
     media = (
         "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
         if fmt == "docx" else "text/plain; charset=utf-8"
@@ -329,7 +473,7 @@ async def job_events(job_id: str, request: Request) -> StreamingResponse:
         while not await request.is_disconnected():
             with session_scope() as db:
                 job = db.get(Job, job_id)
-                if job is None:
+                if job is None or job.cancel_requested:
                     break
                 snapshot = job_dict(job, store)
             key = (snapshot["updated_at"], snapshot["status"])
@@ -363,7 +507,7 @@ def update_segment(segment_id: int, upd: SegmentUpdate) -> dict[str, Any]:
         raise HTTPException(400, "The translation can't be empty")
     with session_scope() as db:
         seg = db.get(Segment, segment_id)
-        if seg is None:
+        if seg is None or seg.job.cancel_requested:
             raise HTTPException(404, "Sentence not found")
         seg.edited, seg.approved = text, True
         entry = db.scalars(select(TMEntry).where(TMEntry.source == seg.source)).first()
@@ -377,12 +521,13 @@ def update_segment(segment_id: int, upd: SegmentUpdate) -> dict[str, Any]:
         )):
             twin.edited, twin.approved = text, True
         db.flush()
-        # A corrected sentence no longer needs checking: keep the document summary in step.
-        counts = {"green": 0, "amber": 0, "red": 0}
-        for s in db.scalars(select(Segment).where(Segment.job_id == seg.job_id)):
-            counts["green" if s.edited is not None else (s.confidence or "green")] += 1
-        seg.job.counts = counts
-        seg.job.outputs_stale = True
+        # A corrected sentence no longer needs checking: keep the document summary in
+        # step. edit_version lets a render that is running right now notice this edit.
+        db.execute(update(Job).where(Job.id == seg.job_id).values(
+            counts=job_counts(db, seg.job_id),
+            outputs_stale=True,
+            edit_version=func.coalesce(Job.edit_version, 0) + 1,
+        ))
         return segment_dict(seg)
 
 
@@ -422,23 +567,84 @@ def glossary_delete(term_id: int) -> dict[str, str]:
     return {"status": "deleted"}
 
 
+MAX_GLOSSARY_BYTES = 2 * 1024 * 1024
+MAX_IMPORT_ERRORS = 20
+CSV_UTF8_HINT = 'In Excel, choose File > Save As > "CSV UTF-8 (Comma delimited)" and import that file.'
+
+
+def decode_csv(data: bytes) -> str:
+    """Text of an uploaded CSV. Only UTF-8 and UTF-16 keep Hindi letters: Excel's plain
+    "CSV (Comma delimited)" saves them as "?", which must not overwrite good terms."""
+    try:
+        if data.startswith((codecs.BOM_UTF16_LE, codecs.BOM_UTF16_BE)):
+            return data.decode("utf-16")
+        if b"\x00" in data[:4096]:
+            raise UnicodeDecodeError("utf-8", data[:1], 0, 1, "NUL byte")
+        return data.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        raise HTTPException(
+            400, f"This file is not saved as UTF-8, so its Hindi text can't be read. {CSV_UTF8_HINT}") from None
+
+
+def _delimiter(text: str) -> str:
+    first = next((line for line in text.splitlines() if line.strip()), "")
+    counts = {d: first.count(d) for d in (",", "\t", ";")}
+    best = max(counts, key=lambda d: counts[d])
+    return best if counts[best] > counts[","] else ","
+
+
 @app.post("/api/glossary/import")
-async def glossary_import(file: UploadFile = File(...)) -> dict[str, int]:
-    text = (await file.read(2 * 1024 * 1024)).decode("utf-8-sig", errors="replace")
-    added = 0
+async def glossary_import(file: UploadFile = File(...)) -> dict[str, Any]:
+    """Import hindi,english[,note] rows. Returns how many were imported and skipped,
+    and why rows were skipped."""
+    data = await file.read(MAX_GLOSSARY_BYTES + 1)
+    if len(data) > MAX_GLOSSARY_BYTES:
+        raise HTTPException(413, "The file is larger than 2 MB")
+    text = decode_csv(data)
+    imported, skipped, errors = 0, 0, []
+
+    def skip(row_no: int, reason: str) -> None:
+        nonlocal skipped
+        skipped += 1
+        if len(errors) < MAX_IMPORT_ERRORS:
+            errors.append(f"Row {row_no}: {reason}")
+
+    try:
+        rows = list(csv.reader(io.StringIO(text), delimiter=_delimiter(text)))
+    except csv.Error as e:
+        raise HTTPException(400, f"This file could not be read as CSV ({e}). {CSV_UTF8_HINT}") from None
     with session_scope() as db:
-        for row in csv.reader(io.StringIO(text)):
-            if len(row) < 2 or not row[0].strip() or not row[1].strip():
+        terms: dict[str, GlossaryTerm] = {}
+        for row_no, row in enumerate(rows, start=1):
+            cells = [c.strip() for c in row]
+            if not any(cells):
                 continue
-            if row[0].strip().lower() == "hindi":
+            if cells[0].lower() == "hindi":
                 continue  # header
-            hindi, english = row[0].strip(), row[1].strip()
-            note = row[2].strip() if len(row) > 2 else ""
-            g = db.scalars(select(GlossaryTerm).where(GlossaryTerm.hindi == hindi)).first() or GlossaryTerm(hindi=hindi)
+            if len(cells) < 2 or not cells[0] or not cells[1]:
+                skip(row_no, "needs both a Hindi term and its English")
+                continue
+            hindi, english = cells[0], cells[1]
+            note = cells[2] if len(cells) > 2 else ""
+            if "\ufffd" in hindi or "?" in hindi or not has_devanagari(hindi):
+                skip(row_no, f'"{hindi[:40]}" has no Hindi letters (was the file saved as CSV UTF-8?)')
+                continue
+            if "\ufffd" in english or "\ufffd" in note:
+                skip(row_no, "contains unreadable characters (was the file saved as CSV UTF-8?)")
+                continue
+            if len(hindi) > 255 or len(english) > 255:
+                skip(row_no, "a term is longer than 255 characters")
+                continue
+            g = terms.get(hindi) or db.scalars(select(GlossaryTerm).where(GlossaryTerm.hindi == hindi)).first()
+            if g is None:
+                g = GlossaryTerm(hindi=hindi)
+                db.add(g)
             g.english, g.note = english, note
-            db.add(g)
-            added += 1
-    return {"imported": added}
+            terms[hindi] = g
+            imported += 1
+    if skipped > len(errors):
+        errors.append(f"…and {skipped - len(errors)} more rows skipped")
+    return {"imported": imported, "skipped": skipped, "errors": errors}
 
 
 @app.get("/api/glossary/export")
@@ -474,13 +680,22 @@ if (FRONTEND_DIST / "assets").exists():
     app.mount("/assets", StaticFiles(directory=FRONTEND_DIST / "assets"), name="assets")
 
 
+def _safe_relative(path: str) -> bool:
+    """Reject before touching the disk: backslashes and drive letters (Windows UNC and
+    absolute paths), NUL, and '..' segments."""
+    if any(ch in path for ch in ("\\", ":", "\x00")):
+        return False
+    return ".." not in PurePosixPath(path).parts and not path.startswith("/")
+
+
 @app.get("/{path:path}", include_in_schema=False)
 def spa(path: str):
     if path.startswith("api/"):
         return JSONResponse({"detail": "Not found"}, status_code=404)
-    candidate = FRONTEND_DIST / path
-    if path and candidate.is_file() and FRONTEND_DIST.resolve() in candidate.resolve().parents:
-        return FileResponse(candidate)
+    if path and _safe_relative(path):
+        candidate = FRONTEND_DIST / path
+        if candidate.is_file() and FRONTEND_DIST.resolve() in candidate.resolve().parents:
+            return FileResponse(candidate)
     index = FRONTEND_DIST / "index.html"
     if index.exists():
         return FileResponse(index)

@@ -106,6 +106,9 @@ def app_env(tmp_path, monkeypatch):
     monkeypatch.setenv("PDFT_MODELS", str(tmp_path / "models"))
     monkeypatch.setenv("PDFT_PROFILE", os.environ.get("PDFT_TEST_PROFILE", "dev"))
     monkeypatch.setenv("PDFT_DEV_DELAY", "0")
+    # The worker waits for free memory before giving up; keep that instant in tests.
+    monkeypatch.setenv("PDFT_MEMORY_WAIT_ATTEMPTS", "2")
+    monkeypatch.setenv("PDFT_MEMORY_WAIT_SECONDS", "0")
     from app import config, db
 
     config.reset_settings_cache()
