@@ -134,7 +134,7 @@ def test_glossary_crud_and_csv(client):
     assert r.status_code == 200
     csv_data = "hindi,english,note\nकार्यादेश,Work Order,\nज्ञापांक,Memo No.,\n".encode()
     r = client.post("/api/glossary/import", files={"file": ("g.csv", csv_data, "text/csv")})
-    assert r.json() == {"imported": 2}
+    assert r.json() == {"imported": 2, "skipped": 0, "errors": []}
     terms = client.get("/api/glossary").json()
     assert {t["hindi"] for t in terms} == {"निविदा", "कार्यादेश", "ज्ञापांक"}
     exported = client.get("/api/glossary/export").content.decode("utf-8-sig")
